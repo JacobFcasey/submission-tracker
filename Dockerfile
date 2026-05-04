@@ -16,7 +16,7 @@ RUN composer config platform.php 8.2.30 && \
     --ignore-platform-req=ext-mailparse \
     --ignore-platform-req=ext-gd
 COPY . .
-RUN composer dump-autoload --optimize
+RUN composer config platform.php 8.2.30 && composer dump-autoload --optimize
 
 # ── Stage 3: Production image ──────────────────────────────────────────────
 FROM php:8.2-cli-bookworm
