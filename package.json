@@ -1,0 +1,50 @@
+{
+    "$schema": "https://json.schemastore.org/package.json",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite --force",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "devDependencies": {
+        "@inertiajs/vue3": "^2.1.5",
+        "@tailwindcss/vite": "^4.0.0",
+        "@vitejs/plugin-vue": "^6.0.1",
+        "autoprefixer": "^10.4.21",
+        "axios": "^1.11.0",
+        "concurrently": "^9.0.1",
+        "eslint": "^9.37.0",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-vue": "^10.5.0",
+        "laravel-vite-plugin": "^2.0.1",
+        "postcss": "^8.5.6",
+        "prettier-plugin-tailwindcss": "^0.7.0",
+        "sass-embedded": "^1.93.2",
+        "stylelint": "^16.25.0",
+        "stylelint-config-recommended-vue": "^1.6.1",
+        "stylelint-config-standard": "^39.0.1",
+        "stylelint-config-tailwindcss": "^1.0.0",
+        "tailwindcss": "^4.1.13",
+        "vite": "^7.1.5",
+        "vue": "^3.5.21"
+    },
+    "dependencies": {
+        "@eslint/js": "^9.37.0",
+        "@fullcalendar/daygrid": "^6.1.20",
+        "@fullcalendar/interaction": "^6.1.20",
+        "@fullcalendar/timegrid": "^6.1.20",
+        "@fullcalendar/vue3": "^6.1.20",
+        "@heroicons/vue": "^2.2.0",
+        "@rushstack/eslint-patch": "^1.14.0",
+        "date-fns": "^4.1.0",
+        "globals": "^16.4.0",
+        "lodash": "^4.17.21",
+        "lucide-vue-next": "^0.544.0",
+        "msgreader": "^1.0.1",
+        "papaparse": "^5.5.3",
+        "vue3-select": "^0.1.2",
+        "read-excel-file": "^6.0.1",
+        "ziggy-js": "^2.6.0"
+    }
+}

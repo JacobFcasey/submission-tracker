@@ -1,0 +1,92 @@
+/* Custom styles for better visual hierarchy */
+.hover-lift:hover {
+    transform: translateY(-2px);
+    transition: transform 0.2s ease;
+}
+
+/* Smooth transitions for notification items */
+.notification-enter-active,
+.notification-leave-active {
+    transition: all 0.3s ease;
+}
+
+.notification-enter-from,
+.notification-leave-to {
+    opacity: 0;
+    transform: translateX(-10px);
+}
+
+/* Notification item transitions */
+.notification-item {
+    transition: all 0.2s ease;
+}
+
+.notification-item:hover {
+    z-index: 1;
+}
+
+/* Unread notification emphasis */
+.notification-item.border-l-4 {
+    padding-left: calc(1.25rem - 4px); /* compensate for border width */
+}
+
+/* Subtle unread glow effect on hover */
+.notification-item:not([class*="bg-white"]):hover {
+    box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.1);
+}
+
+/* Read notification fade effect */
+.notification-item[class*="bg-white"] {
+    opacity: 0.85;
+}
+
+.notification-item[class*="bg-white"]:hover {
+    opacity: 1;
+}
+
+/* Pulse animation for unread dot */
+@keyframes pulse-blue {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* Custom scrollbar for notification list */
+.max-h-\[68vh\]::-webkit-scrollbar {
+    width: 6px;
+}
+
+.max-h-\[68vh\]::-webkit-scrollbar-track {
+    background: #f8fafc;
+    border-radius: 3px;
+}
+
+.max-h-\[68vh\]::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.max-h-\[68vh\]::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .notification-content {
+        padding-left: 0;
+        padding-right: 0;
+    }
+
+    .notification-actions {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    /* On mobile, always show delete button */
+    .notification-item .opacity-0 {
+        opacity: 1 !important;
+    }
+}

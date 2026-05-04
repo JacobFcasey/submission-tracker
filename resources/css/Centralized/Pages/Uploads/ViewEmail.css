@@ -1,0 +1,25 @@
+.email-content {
+    min-height: 300px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.prose :deep(*) {
+    max-width: 100%;
+}
+
+.prose :deep(img) {
+    max-width: 100%;
+    height: auto;
+}
+
+.prose :deep(table) {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.prose :deep(th),
+.prose :deep(td) {
+    border: 1px solid #e5e7eb;
+    padding: 8px;
+}

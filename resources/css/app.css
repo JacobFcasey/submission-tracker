@@ -1,0 +1,150 @@
+@import 'tailwindcss';
+@import 'tailwindcss/theme' reference;
+@import 'tailwindcss/utilities' reference;
+
+/* ---------- optional helpers ---------- */
+@utility btn {
+    @apply inline-flex items-center justify-center rounded-xl bg-emerald-600 px-3.5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700;
+}
+@utility card {
+    @apply rounded-2xl border bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/60;
+}
+@utility nav-link {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-700;
+}
+
+/* ---------- toned-down animated gradient ---------- */
+/* Dusk jungle: deep slates with soft emerald/teal accents */
+:root {
+    --grad-a: 18 24 38; /* #121826 slate-900-ish */
+    --grad-b: 12 18 32; /* #0c1220 base you used */
+    --accent-1: 16 185 129; /* emerald-500 */
+    --accent-2: 13 148 136; /* teal-600 */
+}
+
+/* Very soft motion + low alpha overlays */
+@keyframes jungle-pan {
+    0%,
+    100% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+}
+
+/* Dark default */
+.bg-animated-gradient {
+    /* base body color */
+    background-color: rgb(var(--grad-b) / 1);
+
+    /* low-opacity accent glows + subtle vertical fade */
+    background-image:
+        radial-gradient(800px 420px at -10% 0%, rgb(var(--accent-1) / 0.18), transparent 55%),
+        radial-gradient(700px 380px at 110% 10%, rgb(var(--accent-2) / 0.14), transparent 55%),
+        linear-gradient(180deg, rgb(var(--grad-a) / 1) 0%, rgb(var(--grad-b) / 1) 100%);
+
+    background-size:
+        120% 120%,
+        120% 120%,
+        100% 100%;
+    background-repeat: no-repeat;
+    animation: jungle-pan 28s ease-in-out infinite; /* slower & calmer */
+}
+
+/* Light counterpart (if you toggle themes) */
+.bg-animated-gradient--light {
+    --grad-a: 241 245 249; /* slate-100 */
+    --grad-b: 226 232 240; /* slate-200 */
+    background-color: rgb(var(--grad-b) / 1);
+    background-image:
+        radial-gradient(900px 460px at -10% 0%, rgb(var(--accent-1) / 0.1), transparent 55%),
+        radial-gradient(800px 420px at 110% 10%, rgb(var(--accent-2) / 0.08), transparent 55%),
+        linear-gradient(180deg, rgb(var(--grad-a) / 1) 0%, rgb(var(--grad-b) / 1) 100%);
+    animation: jungle-pan 32s ease-in-out infinite;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .bg-animated-gradient,
+    .bg-animated-gradient--light {
+        animation: none;
+        background-size: 100% 100%;
+    }
+}
+
+/* ---------- menu cosmetics for GSAP ---------- */
+.menu-panel {
+    /* the vertical nav container */
+    @apply h-full w-64 overflow-y-auto p-6;
+}
+
+.menu-item {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-white/90 hover:bg-white/10 hover:text-white;
+    transform: translateX(-12px); /* gsap start hint (optional) */
+    opacity: 0; /* gsap start hint (optional) */
+}
+
+.menu-icon {
+    @apply h-4 w-4 opacity-80 group-hover:opacity-100;
+}
+
+/* Full-border pulse (soft) */
+@keyframes borderPulse {
+    0% {
+        filter: drop-shadow(0 0 0 rgba(16, 185, 129, 0.25));
+        opacity: 0.85;
+    }
+    50% {
+        filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.35));
+        opacity: 1;
+    }
+    100% {
+        filter: drop-shadow(0 0 0 rgba(16, 185, 129, 0.25));
+        opacity: 0.85;
+    }
+}
+
+@utility animate-border-pulse {
+    animation: borderPulse 2.6s ease-in-out infinite;
+}
+
+/* Add custom blue color classes */
+@utility bg-blue-500 {
+    background-color: #3b82f6;
+}
+@utility bg-blue-600 {
+    background-color: #2563eb;
+}
+@utility bg-blue-700 {
+    background-color: #1d4ed8;
+}
+@utility bg-blue-50 {
+    background-color: #eff6ff;
+}
+@utility bg-blue-100 {
+    background-color: #dbeafe;
+}
+@utility text-blue-500 {
+    color: #3b82f6;
+}
+@utility text-blue-600 {
+    color: #2563eb;
+}
+@utility text-blue-700 {
+    color: #1d4ed8;
+}
+@utility text-blue-800 {
+    color: #1e40af;
+}
+@utility text-blue-900 {
+    color: #1e3a8a;
+}
+@utility border-blue-500 {
+    border-color: #3b82f6;
+}
+@utility focus-ring-blue-500 {
+    &:focus {
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+    }
+}

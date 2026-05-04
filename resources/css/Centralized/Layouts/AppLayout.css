@@ -1,0 +1,153 @@
+/* Subtle grid texture like the 6th design */
+.sidebar-surface {
+    position: relative;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+}
+
+aside svg {
+    display: inline-block !important;
+    color: inherit !important;
+    stroke: currentColor !important;
+    fill: none !important;
+}
+
+.sidebar-surface::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: linear-gradient(rgba(15, 23, 42, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.08) 1px, transparent 1px);
+    background-size: 28px 28px;
+    opacity: 0.28;
+}
+
+.sidebar-surface > * {
+    position: relative;
+}
+
+/* Make outlines more visible everywhere nav uses it */
+.nav-outline {
+    border: 1px solid transparent;
+}
+
+.nav-outline:hover {
+    border-color: rgba(148, 163, 184, 0.85); /* slate-400-ish */
+}
+
+/* ========================================================================
+   FullCalendar — enterprise slate/emerald theme
+   ======================================================================== */
+.calendar-container {
+    font-family: inherit;
+}
+
+.fc {
+    --fc-border-color: #e2e8f0;            /* slate-200 */
+    --fc-button-bg-color: #475569;          /* slate-600 */
+    --fc-button-border-color: #475569;
+    --fc-button-hover-bg-color: #334155;    /* slate-700 */
+    --fc-button-hover-border-color: #334155;
+    --fc-button-active-bg-color: #1e293b;   /* slate-800 */
+    --fc-button-active-border-color: #1e293b;
+    --fc-today-bg-color: rgba(16, 185, 129, 0.06); /* emerald-500 @ 6% */
+    --fc-event-bg-color: #059669;           /* emerald-600 */
+    --fc-event-border-color: #059669;
+    --fc-page-bg-color: #ffffff;
+    --fc-neutral-bg-color: #f8fafc;         /* slate-50 */
+}
+
+.fc .fc-button {
+    font-weight: 500;
+    font-size: 0.8125rem;
+    text-transform: capitalize;
+    padding: 0.4rem 0.875rem;
+    border-radius: 0.5rem;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.fc .fc-button-group > .fc-button {
+    border-radius: 0;
+}
+.fc .fc-button-group > .fc-button:first-child { border-radius: 0.5rem 0 0 0.5rem; }
+.fc .fc-button-group > .fc-button:last-child  { border-radius: 0 0.5rem 0.5rem 0; }
+
+.fc .fc-toolbar-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #1e293b;
+    letter-spacing: -0.01em;
+}
+
+.fc .fc-col-header-cell-cushion {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    padding: 0.5rem 0;
+}
+
+.fc .fc-daygrid-day-number {
+    font-weight: 500;
+    font-size: 0.8125rem;
+    color: #475569;
+    padding: 0.35rem 0.5rem;
+}
+
+.fc .fc-daygrid-event {
+    border-radius: 0.375rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+    border: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+.fc .fc-day-today {
+    background-color: rgba(16, 185, 129, 0.06) !important;
+}
+
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+    font-weight: 800;
+    color: #059669;
+    background: rgba(16, 185, 129, 0.12);
+    border-radius: 9999px;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.fc .fc-daygrid-event-dot { display: none; }
+
+.fc-event {
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.fc-event:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+
+.fc .fc-daygrid-day-frame {
+    min-height: 5.5rem;
+}
+
+.fc .fc-scrollgrid {
+    border-radius: 0.75rem;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+}
+
+/* Sticky header */
+header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}

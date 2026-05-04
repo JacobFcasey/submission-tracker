@@ -1,0 +1,112 @@
+/* User avatar styles */
+.w-4.h-4,
+.w-5.h-5 {
+    flex-shrink: 0;
+}
+
+/* Table responsive styles */
+@media (max-width: 640px) {
+    .md\:col-span-2 {
+        grid-column: span 2 / span 2;
+    }
+
+    .flex-col {
+        flex-direction: column;
+    }
+
+    .gap-4 {
+        gap: 1rem;
+    }
+}
+
+/* Smooth transitions */
+.fade-enter-active,
+.fade-leave-active {
+    transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+    opacity: 0;
+}
+
+/* Spreadsheet table styles */
+table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+th, td {
+    border-right: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+th:last-child, td:last-child {
+    border-right: none;
+}
+
+tr:last-child td {
+    border-bottom: none;
+}
+
+/* Email preview styles */
+.email-header {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    line-height: 1.5;
+}
+
+/* Custom scrollbar for previews */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+.email-html-preview {
+    max-height: 26rem;
+    overflow: auto;
+    border: 1px solid #e2e8f0;
+}
+
+.caps-compare-modal {
+    border: 1px solid #cbd5e1;
+}
+
+.caps-compare-header {
+    backdrop-filter: blur(4px);
+}
+
+.caps-focus-table-wrap {
+    max-height: 24rem;
+}
+
+.caps-focus-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+}
+
+.caps-focus-table tbody tr:nth-child(odd) {
+    background: #f8fafc;
+}
+
+.caps-focus-table tbody td {
+    white-space: nowrap;
+    font-size: 0.78rem;
+    line-height: 1.2rem;
+}

@@ -1,0 +1,49 @@
+/* Animations */
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+.dashboard-panel {
+    max-height: 28rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-panel > .divide-y {
+    overflow-y: auto;
+    max-height: 18rem;
+}
+
+@media (max-width: 1024px) {
+    .dashboard-panel {
+        max-height: 22rem;
+    }
+
+    .dashboard-panel > .divide-y {
+        max-height: 14rem;
+    }
+}
