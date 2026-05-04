@@ -10,7 +10,10 @@ RUN npm run build
 FROM composer:2 AS composer
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist \
+    --ignore-platform-req=ext-bcmath \
+    --ignore-platform-req=ext-mailparse \
+    --ignore-platform-req=ext-gd
 COPY . .
 RUN composer dump-autoload --optimize
 
