@@ -58,7 +58,7 @@ WORKDIR /var/www/html
 # Copy application code
 COPY --from=composer /app /var/www/html
 COPY --from=frontend /app/public/build /var/www/html/public/build
-RUN rm -f vendor/composer/platform_check.php
+RUN echo '<?php // platform check skipped' > vendor/composer/platform_check.php
 
 # Set permissions
 RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
