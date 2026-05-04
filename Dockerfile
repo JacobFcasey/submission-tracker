@@ -18,7 +18,7 @@ COPY . .
 RUN composer dump-autoload --optimize
 
 # ── Stage 3: Production image ──────────────────────────────────────────────
-FROM php:8.2-cli
+FROM php:8.2-cli-bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6-dev \
     libxml2-dev \
     libonig-dev \
-    libc-client2007e-dev \
+    libc-client-dev \
     libkrb5-dev \
     unzip \
     && rm -rf /var/lib/apt/lists/*
