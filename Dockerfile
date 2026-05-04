@@ -68,8 +68,11 @@ RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cac
 EXPOSE 10000
 
 # Start Laravel (Render injects PORT env var automatically)
-CMD php artisan config:cache && \
+CMD set -e && \
+    php artisan config:cache && \
     php artisan route:cache && \
     php artisan view:cache && \
-    php artisan migrate --force && \
+    echo "Running migrations..." && \
+    php artisan migrate --force 2>&1 && \
+    echo "Starting server on port ${PORT:-10000}..." && \
     php artisan serve --host=0.0.0.0 --port=${PORT:-10000}
