@@ -1187,30 +1187,59 @@ const capsVerifyState = ref({
     results: null,
 });
 
-const capsVerifyFocus = ref('member_not_found');
+const capsVerifyFocus = ref(null);
 
-const capsVerifyTabs = [
-    { key: 'member_not_found', label: 'Members Not in CAPS', shortLabel: 'Members Missing', activeBorder: 'border-red-500', iconBg: 'bg-red-100', iconColor: 'text-red-600', countColor: 'text-red-700', icon: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z' },
-    { key: 'policy_not_found', label: 'Policies Not in CAPS', shortLabel: 'Policies Missing', activeBorder: 'border-orange-500', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', countColor: 'text-orange-700', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-    { key: 'premium_mismatch', label: 'Premium Amount Mismatches', shortLabel: 'Premium Mismatch', activeBorder: 'border-amber-500', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', countColor: 'text-amber-700', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'member_found', label: 'Members Verified in CAPS', shortLabel: 'Members OK', activeBorder: 'border-green-500', iconBg: 'bg-green-100', iconColor: 'text-green-600', countColor: 'text-green-700', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'policy_found', label: 'Policies Verified in CAPS', shortLabel: 'Policies OK', activeBorder: 'border-teal-500', iconBg: 'bg-teal-100', iconColor: 'text-teal-600', countColor: 'text-teal-700', icon: 'M5 13l4 4L19 7' },
+const capsVerifyCards = [
+    { key: 'member_found', label: 'Verified', badgeClass: 'bg-teal-100 text-teal-700', iconClass: 'text-green-500', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'policy_found', label: 'Policies OK', badgeClass: 'bg-blue-100 text-blue-700', iconClass: 'text-blue-500', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'member_not_found', label: 'Members Missing', badgeClass: 'bg-red-100 text-red-700', iconClass: 'text-orange-500', icon: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'policy_not_found', label: 'Policies Missing', badgeClass: 'bg-red-100 text-red-700', iconClass: 'text-red-500', icon: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'premium_mismatch', label: 'Mismatch', badgeClass: 'bg-amber-100 text-amber-700', iconClass: 'text-amber-500', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
 ];
 
 const capsVerifyCurrentRows = computed(() => {
     const results = capsVerifyState.value.results;
     if (!results) return [];
-    return (results[capsVerifyFocus.value] || []).slice(0, 200);
+    if (!capsVerifyFocus.value) {
+        // Show all rows combined with status
+        const all = [];
+        for (const card of capsVerifyCards) {
+            for (const row of (results[card.key] || [])) {
+                all.push({ ...row, _status: card.label, _badgeClass: card.badgeClass });
+            }
+        }
+        // Deduplicate by policyCode + memberId (keep first occurrence = highest priority status)
+        const seen = new Set();
+        return all.filter(row => {
+            const key = `${row.memberId || ''}|${row.personelNumber || ''}|${row.policyCode || ''}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        }).slice(0, 500);
+    }
+    return (results[capsVerifyFocus.value] || []).map(row => ({
+        ...row,
+        _status: capsVerifyCards.find(c => c.key === capsVerifyFocus.value)?.label || '',
+        _badgeClass: capsVerifyCards.find(c => c.key === capsVerifyFocus.value)?.badgeClass || '',
+    })).slice(0, 500);
 });
 
-const capsVerifyScore = computed(() => {
-    const r = capsVerifyState.value.results;
-    if (!r) return 0;
-    const total = r.uploaded_rows_total || 1;
-    const found = (r.member_found?.length || 0);
-    const issues = (r.member_not_found?.length || 0) + (r.policy_not_found?.length || 0) + (r.premium_mismatch?.length || 0);
-    if (total === 0) return 100;
-    return Math.round(Math.max(0, ((total - issues) / total) * 100));
+const capsVerifyTotalPremium = computed(() => {
+    const results = capsVerifyState.value.results;
+    if (!results) return 0;
+    const allRows = [
+        ...(results.member_found || []),
+        ...(results.member_not_found || []),
+    ];
+    const seen = new Set();
+    let total = 0;
+    for (const row of allRows) {
+        const key = `${row.memberId || ''}|${row.policyCode || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        total += Number(row.premiumAmount || 0);
+    }
+    return total;
 });
 
 const compareWithCapsMembers = async (upload) => {
@@ -1265,6 +1294,7 @@ const compareWithCapsMembers = async (upload) => {
                     personelNumber: r.personelNumber || '',
                     policyCode: r.policyCode || '',
                     premiumAmount: r.premiumAmount,
+                    companyName: r.companyName || '',
                 })),
             }),
         });
@@ -1286,12 +1316,8 @@ const compareWithCapsMembers = async (upload) => {
             results: json.results,
         };
 
-        // Default to the tab with the most issues
-        const r = json.results;
-        if ((r.member_not_found?.length || 0) > 0) capsVerifyFocus.value = 'member_not_found';
-        else if ((r.policy_not_found?.length || 0) > 0) capsVerifyFocus.value = 'policy_not_found';
-        else if ((r.premium_mismatch?.length || 0) > 0) capsVerifyFocus.value = 'premium_mismatch';
-        else capsVerifyFocus.value = 'member_found';
+        // Default: show all rows (no filter)
+        capsVerifyFocus.value = null;
 
     } catch (error) {
         capsVerifyState.value = {
@@ -1315,11 +1341,8 @@ const showPrecomputedVerification = (upload) => {
         results,
     };
 
-    // Default to the tab with the most issues
-    if ((results.member_not_found?.length || 0) > 0) capsVerifyFocus.value = 'member_not_found';
-    else if ((results.policy_not_found?.length || 0) > 0) capsVerifyFocus.value = 'policy_not_found';
-    else if ((results.premium_mismatch?.length || 0) > 0) capsVerifyFocus.value = 'premium_mismatch';
-    else capsVerifyFocus.value = 'member_found';
+    // Default: show all rows
+    capsVerifyFocus.value = null;
 };
 
 const closeCapsVerify = () => {
@@ -1645,55 +1668,67 @@ const closeCapsVerify = () => {
                 </div>
             </div>
 
-            <!-- ==================== CAPS Member/Policy Verification Modal ==================== -->
+            <!-- ==================== CAPS Verification Modal (Batch-style) ==================== -->
             <div
                 v-if="capsVerifyState.show"
-                class="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+                class="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4"
                 @click.self="closeCapsVerify"
             >
-                <div class="relative flex max-h-[92vh] w-full max-w-6xl flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
-                    <!-- Header with gradient -->
-                    <div class="bg-gradient-to-r from-teal-600 to-emerald-600 px-6 py-5 text-white">
+                <div class="relative flex max-h-[94vh] w-full max-w-7xl flex-col rounded-xl bg-gray-50 shadow-2xl overflow-hidden">
+
+                    <!-- Header -->
+                    <div class="bg-white px-6 py-5 border-b">
                         <div class="flex items-start justify-between">
-                            <div>
-                                <div class="flex items-center gap-3">
-                                    <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
-                                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                                        </svg>
+                            <div class="flex items-center gap-4">
+                                <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-teal-50">
+                                    <svg class="h-6 w-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-3">
+                                        <h3 class="text-lg font-bold text-gray-900">Upload #{{ capsVerifyState.uploadReference }}</h3>
+                                        <span v-if="capsVerifyState.results" class="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Pending</span>
                                     </div>
-                                    <div>
-                                        <h3 class="text-lg font-bold">CAPS Verification</h3>
-                                        <p class="text-sm text-white/80">
-                                            {{ capsVerifyState.companyName }} &middot; Ref: {{ capsVerifyState.uploadReference }}
-                                        </p>
-                                    </div>
+                                    <p v-if="capsVerifyState.results" class="text-sm text-gray-500 mt-0.5">
+                                        {{ capsVerifyState.results.uploaded_rows_total }} total records
+                                    </p>
                                 </div>
                             </div>
-                            <button @click="closeCapsVerify" class="rounded-lg p-2 hover:bg-white/20 transition-colors">
-                                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
+                            <div class="flex items-center gap-2">
+                                <button @click="closeCapsVerify" class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                    Close
+                                </button>
+                            </div>
                         </div>
                     </div>
 
+                    <!-- Metadata row -->
+                    <div v-if="capsVerifyState.results" class="bg-white border-b px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-1 text-sm text-gray-600">
+                        <span class="flex items-center gap-1.5">
+                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                            Company <strong class="text-gray-900 ml-1">{{ capsVerifyState.companyName || '—' }}</strong>
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            Members checked <strong class="text-gray-900 ml-1">{{ capsVerifyState.results.caps_members_total }}</strong>
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                            Policies checked <strong class="text-gray-900 ml-1">{{ capsVerifyState.results.caps_policies_total }}</strong>
+                        </span>
+                    </div>
+
                     <!-- Loading -->
-                    <div v-if="capsVerifyState.loading" class="flex flex-col items-center justify-center py-20">
-                        <div class="relative">
-                            <div class="h-16 w-16 animate-spin rounded-full border-4 border-teal-100 border-t-teal-600"></div>
-                            <div class="absolute inset-0 flex items-center justify-center">
-                                <svg class="h-6 w-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                                </svg>
-                            </div>
-                        </div>
+                    <div v-if="capsVerifyState.loading" class="flex flex-col items-center justify-center py-20 bg-white">
+                        <div class="h-14 w-14 animate-spin rounded-full border-4 border-teal-100 border-t-teal-600"></div>
                         <p class="mt-4 text-sm font-medium text-gray-600">Verifying against CAPS...</p>
                         <p class="mt-1 text-xs text-gray-400">Checking members and policies</p>
                     </div>
 
                     <!-- Error -->
-                    <div v-else-if="capsVerifyState.error" class="p-8">
+                    <div v-else-if="capsVerifyState.error" class="p-8 bg-white">
                         <div class="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
                             <svg class="mx-auto h-10 w-10 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -1706,152 +1741,100 @@ const closeCapsVerify = () => {
                     <!-- Results -->
                     <div v-else-if="capsVerifyState.results" class="flex flex-col overflow-hidden">
 
-                        <!-- Health Score Bar -->
-                        <div class="border-b bg-gray-50 px-6 py-4">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-sm font-semibold text-gray-700">Verification Score</span>
-                                <span :class="[
-                                    'text-sm font-bold',
-                                    capsVerifyScore >= 90 ? 'text-green-600' :
-                                    capsVerifyScore >= 70 ? 'text-amber-600' : 'text-red-600'
-                                ]">{{ capsVerifyScore }}%</span>
-                            </div>
-                            <div class="h-2.5 w-full rounded-full bg-gray-200 overflow-hidden">
-                                <div
-                                    :class="[
-                                        'h-full rounded-full transition-all duration-500',
-                                        capsVerifyScore >= 90 ? 'bg-gradient-to-r from-green-400 to-emerald-500' :
-                                        capsVerifyScore >= 70 ? 'bg-gradient-to-r from-amber-400 to-orange-500' :
-                                        'bg-gradient-to-r from-red-400 to-rose-500'
-                                    ]"
-                                    :style="{ width: capsVerifyScore + '%' }"
-                                ></div>
-                            </div>
-                            <p class="mt-1.5 text-xs text-gray-500">
-                                {{ capsVerifyState.results.caps_members_total }} members and {{ capsVerifyState.results.caps_policies_total }} policies checked in CAPS
-                            </p>
-                        </div>
-
                         <!-- Summary cards -->
-                        <div class="grid grid-cols-5 gap-0 border-b">
+                        <div class="grid grid-cols-5 gap-4 px-6 py-5">
                             <button
-                                v-for="tab in capsVerifyTabs"
-                                :key="tab.key"
-                                @click="capsVerifyFocus = tab.key"
+                                v-for="card in capsVerifyCards"
+                                :key="card.key"
+                                @click="capsVerifyFocus = capsVerifyFocus === card.key ? null : card.key"
                                 :class="[
-                                    'relative flex flex-col items-center py-4 px-2 transition-all border-b-2 cursor-pointer',
-                                    capsVerifyFocus === tab.key
-                                        ? tab.activeBorder + ' bg-white'
-                                        : 'border-transparent bg-gray-50/50 hover:bg-white',
+                                    'relative flex flex-col items-center rounded-lg border py-4 px-3 transition-all cursor-pointer',
+                                    capsVerifyFocus === card.key
+                                        ? 'border-teal-400 bg-white shadow-md ring-1 ring-teal-400'
+                                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm',
                                 ]"
                             >
-                                <div :class="[
-                                    'flex h-9 w-9 items-center justify-center rounded-full mb-1.5',
-                                    tab.iconBg
-                                ]">
-                                    <svg class="h-4 w-4" :class="tab.iconColor" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="tab.icon" />
-                                    </svg>
-                                </div>
-                                <span class="text-xl font-bold" :class="tab.countColor">
-                                    {{ (capsVerifyState.results[tab.key] || []).length }}
+                                <svg class="h-5 w-5 mb-2" :class="card.iconClass" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="card.icon" />
+                                </svg>
+                                <span class="text-2xl font-bold text-gray-900">
+                                    {{ (capsVerifyState.results[card.key] || []).length }}
                                 </span>
-                                <span class="text-[10px] font-medium text-gray-500 text-center leading-tight mt-0.5">{{ tab.shortLabel }}</span>
+                                <span class="text-xs font-medium text-gray-500 mt-0.5">{{ card.label }}</span>
                             </button>
                         </div>
 
                         <!-- CAPS data warnings -->
-                        <div v-if="capsVerifyState.results.caps_members_error || capsVerifyState.results.caps_policies_error" class="px-6 pt-3 space-y-2">
+                        <div v-if="capsVerifyState.results.caps_members_error || capsVerifyState.results.caps_policies_error" class="px-6 pb-3 space-y-2">
                             <div v-if="capsVerifyState.results.caps_members_error" class="flex items-center gap-2 rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800">
-                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                </svg>
+                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                                 Members: {{ capsVerifyState.results.caps_members_error }}
                             </div>
                             <div v-if="capsVerifyState.results.caps_policies_error" class="flex items-center gap-2 rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800">
-                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                </svg>
+                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                                 Policies: {{ capsVerifyState.results.caps_policies_error }}
                             </div>
                         </div>
 
-                        <!-- Active tab label -->
-                        <div class="px-6 pt-4 pb-2 flex items-center justify-between">
-                            <h4 class="text-sm font-semibold text-gray-800">
-                                {{ capsVerifyTabs.find(t => t.key === capsVerifyFocus)?.label }}
-                            </h4>
-                            <span class="text-xs text-gray-400">
-                                Showing {{ Math.min(capsVerifyCurrentRows.length, 200) }} of {{ (capsVerifyState.results[capsVerifyFocus] || []).length }} records
-                            </span>
-                        </div>
+                        <!-- Table area -->
+                        <div class="flex-1 overflow-hidden bg-white border-t mx-6 mb-4 rounded-lg border">
+                            <!-- Table header with total premium -->
+                            <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50/50">
+                                <span class="text-sm text-gray-500">
+                                    {{ capsVerifyFocus ? capsVerifyCards.find(c => c.key === capsVerifyFocus)?.label : 'All Records' }}
+                                    &mdash; {{ capsVerifyCurrentRows.length }} records
+                                </span>
+                                <span class="inline-flex items-center rounded-full border border-gray-300 bg-white px-3 py-1 text-sm font-semibold text-gray-800">
+                                    Total Premium: R {{ capsVerifyTotalPremium.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
+                                </span>
+                            </div>
 
-                        <!-- Table -->
-                        <div class="flex-1 overflow-auto px-6 pb-4" style="max-height: 42vh">
-                            <table v-if="capsVerifyCurrentRows.length" class="w-full text-sm">
-                                <thead class="sticky top-0 bg-white">
-                                    <tr class="border-b-2 border-gray-200 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                                        <th class="py-3 pr-3 w-10">#</th>
-                                        <th class="py-3 pr-3">Member ID</th>
-                                        <th class="py-3 pr-3">Employee No</th>
-                                        <th class="py-3 pr-3">Policy Code</th>
-                                        <th class="py-3 pr-3 text-right">Uploaded Amount</th>
-                                        <th v-if="capsVerifyFocus === 'premium_mismatch'" class="py-3 pr-3 text-right">CAPS Amount</th>
-                                        <th v-if="capsVerifyFocus === 'premium_mismatch'" class="py-3 text-right">Difference</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-gray-100">
-                                    <tr
-                                        v-for="(row, idx) in capsVerifyCurrentRows"
-                                        :key="idx"
-                                        :class="[
-                                            'transition-colors',
-                                            capsVerifyFocus === 'member_not_found' || capsVerifyFocus === 'policy_not_found'
-                                                ? 'hover:bg-red-50/50'
-                                                : capsVerifyFocus === 'premium_mismatch'
-                                                    ? 'hover:bg-amber-50/50'
-                                                    : 'hover:bg-green-50/50'
-                                        ]"
-                                    >
-                                        <td class="py-2.5 pr-3 text-xs text-gray-400">{{ idx + 1 }}</td>
-                                        <td class="py-2.5 pr-3">
-                                            <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 font-mono text-xs font-medium text-gray-700">
-                                                {{ row.memberId || '—' }}
-                                            </span>
-                                        </td>
-                                        <td class="py-2.5 pr-3 font-mono text-xs text-gray-600">{{ row.personelNumber || '—' }}</td>
-                                        <td class="py-2.5 pr-3">
-                                            <span class="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 font-mono text-xs font-medium text-blue-700">
-                                                {{ row.policyCode || '—' }}
-                                            </span>
-                                        </td>
-                                        <td class="py-2.5 pr-3 text-right font-medium">
-                                            {{ row.premiumAmount != null ? `R ${Number(row.uploaded_premium ?? row.premiumAmount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '—' }}
-                                        </td>
-                                        <td v-if="capsVerifyFocus === 'premium_mismatch'" class="py-2.5 pr-3 text-right font-semibold text-teal-700">
-                                            R {{ Number(row.caps_premium).toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
-                                        </td>
-                                        <td v-if="capsVerifyFocus === 'premium_mismatch'" class="py-2.5 text-right">
-                                            <span :class="[
-                                                'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold',
-                                                Number(row.uploaded_premium ?? row.premiumAmount) > Number(row.caps_premium)
-                                                    ? 'bg-red-100 text-red-700'
-                                                    : 'bg-amber-100 text-amber-700'
-                                            ]">
-                                                {{ Number(row.uploaded_premium ?? row.premiumAmount) > Number(row.caps_premium) ? '+' : '' }}R {{ (Number(row.uploaded_premium ?? row.premiumAmount) - Number(row.caps_premium)).toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                            <div v-else class="flex flex-col items-center justify-center py-12 text-center">
-                                <div class="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mb-3">
-                                    <svg class="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                    </svg>
+                            <div class="overflow-auto" style="max-height: 46vh">
+                                <table v-if="capsVerifyCurrentRows.length" class="w-full text-sm">
+                                    <thead class="sticky top-0 bg-gray-50 z-10">
+                                        <tr class="text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                                            <th class="py-3 pl-4 pr-3">Employee No</th>
+                                            <th class="py-3 pr-3">ID Number</th>
+                                            <th class="py-3 pr-3">Policy Code</th>
+                                            <th class="py-3 pr-3">Status</th>
+                                            <th class="py-3 pr-3">Company</th>
+                                            <th class="py-3 pr-3 text-right">Amount Payable</th>
+                                            <th class="py-3 pr-4 text-right">Premium</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                                        <tr
+                                            v-for="(row, idx) in capsVerifyCurrentRows"
+                                            :key="idx"
+                                            class="hover:bg-gray-50/70 transition-colors"
+                                        >
+                                            <td class="py-2.5 pl-4 pr-3 text-sm text-gray-600">{{ row.personelNumber || '—' }}</td>
+                                            <td class="py-2.5 pr-3 font-mono text-sm text-gray-900 font-medium">{{ row.memberId || '—' }}</td>
+                                            <td class="py-2.5 pr-3 font-mono text-sm font-bold text-gray-900">{{ row.policyCode || '—' }}</td>
+                                            <td class="py-2.5 pr-3">
+                                                <span :class="['inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium', row._badgeClass]">
+                                                    {{ row._status }}
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 pr-3 text-sm text-gray-600">{{ row.companyName || '—' }}</td>
+                                            <td class="py-2.5 pr-3 text-right text-sm text-gray-500">
+                                                {{ row.caps_premium != null ? `R ${Number(row.caps_premium).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : 'R 0,00' }}
+                                            </td>
+                                            <td class="py-2.5 pr-4 text-right text-sm font-semibold text-teal-600">
+                                                R {{ Number(row.premiumAmount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <div v-else class="flex flex-col items-center justify-center py-16 text-center">
+                                    <div class="flex h-14 w-14 items-center justify-center rounded-full bg-green-100 mb-3">
+                                        <svg class="h-7 w-7 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <p class="text-sm font-medium text-gray-700">All clear</p>
+                                    <p class="text-xs text-gray-400 mt-1">No records in this category</p>
                                 </div>
-                                <p class="text-sm font-medium text-gray-700">All clear</p>
-                                <p class="text-xs text-gray-400 mt-1">No issues found in this category</p>
                             </div>
                         </div>
                     </div>
