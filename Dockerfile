@@ -34,7 +34,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install PHP extensions
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
     && docker-php-ext-install -j$(nproc) \
         pdo_pgsql \
         pdo_mysql \
@@ -44,11 +43,11 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
         mbstring \
         xml \
         bcmath \
-        imap \
         pcntl
 
-# Install mailparse via PECL
-RUN pecl install mailparse && docker-php-ext-enable mailparse
+# Install imap and mailparse via PECL (imap removed from bundled extensions in PHP 8.4)
+RUN pecl install imap mailparse \
+    && docker-php-ext-enable imap mailparse
 
 WORKDIR /var/www/html
 
