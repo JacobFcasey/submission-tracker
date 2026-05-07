@@ -361,12 +361,12 @@ onMounted(() => {
             </div>
         </div>
 
-        <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
             <!-- Header with User Filter (Super-Admin only) -->
-            <div class="mb-8">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div class="mb-4">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div>
-                        <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
+                        <h1 class="text-xl font-bold text-gray-900">Dashboard</h1>
                         <p class="mt-2 text-gray-600">
                             Welcome back! Here's your overview of assignments and deadlines.
                             <span v-if="isSuperAdmin && currentUserName" class="font-medium text-blue-600">
@@ -433,8 +433,8 @@ onMounted(() => {
 
 
 
-            <!-- CAPS Data Sync Panel (admin only) -->
-            <div v-if="isAdmin && capsSync" class="mb-6">
+            <!-- CAPS Data Sync Panel -->
+            <div v-if="capsSync" class="mb-4">
 
                 <!-- ── Empty state: no CAPS data yet ── -->
                 <div v-if="!capsSync.hasData"
@@ -501,6 +501,18 @@ onMounted(() => {
                                     </svg>
                                     {{ capsSync.companies }} companies
                                 </span>
+                                <span class="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-200/60">
+                                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                                    </svg>
+                                    {{ capsSync.members?.toLocaleString() || 0 }} members
+                                </span>
+                                <span class="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-200/60">
+                                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                    </svg>
+                                    {{ capsSync.policies?.toLocaleString() || 0 }} policies
+                                </span>
                             </div>
 
                             <!-- Last sync timestamp -->
@@ -554,7 +566,7 @@ onMounted(() => {
             </div>
 
             <!-- Stats Cards -->
-            <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <!-- Total Assignments -->
                 <Link href="/deadlines/municipalities"
                       class="group relative overflow-hidden rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all duration-200 hover:shadow-lg hover:border-blue-200 hover:-translate-y-0.5 cursor-pointer">
@@ -632,7 +644,7 @@ onMounted(() => {
             </div>
 
             <!-- Main Content Grid -->
-            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 <!-- Left Column -->
                 <div class="space-y-4">
                     <!-- Upcoming Deadlines -->

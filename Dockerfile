@@ -10,16 +10,12 @@ RUN npm run build
 FROM composer:2 AS composer
 WORKDIR /app
 COPY composer.json composer.lock ./
-RUN composer config platform.php 8.2.30 && \
-    composer install --no-dev --no-scripts --no-autoloader --prefer-dist \
-    --ignore-platform-req=ext-bcmath \
-    --ignore-platform-req=ext-mailparse \
-    --ignore-platform-req=ext-gd
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 COPY . .
-RUN composer config platform.php 8.2.30 && composer dump-autoload --optimize
+RUN composer dump-autoload --optimize
 
 # ── Stage 3: Production image ──────────────────────────────────────────────
-FROM php:8.2-cli-bookworm
+FROM php:8.2-cli
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,21 +54,17 @@ WORKDIR /var/www/html
 # Copy application code
 COPY --from=composer /app /var/www/html
 COPY --from=frontend /app/public/build /var/www/html/public/build
-RUN echo '<?php // platform check skipped' > vendor/composer/platform_check.php
 
 # Set permissions
 RUN mkdir -p storage/framework/{cache,sessions,views} storage/logs bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
-# Expose port
+# Expose Render's port
 EXPOSE 10000
 
-# Start Laravel (Render injects PORT env var automatically)
-CMD set -e && \
-    php artisan config:cache && \
+# Start Laravel using the built-in server (Render injects PORT)
+CMD php artisan config:cache && \
     php artisan route:cache && \
     php artisan view:cache && \
-    echo "Running migrations..." && \
-    php artisan migrate --force 2>&1 && \
-    echo "Starting server on port ${PORT:-10000}..." && \
+    php artisan migrate --force && \
     php artisan serve --host=0.0.0.0 --port=${PORT:-10000}

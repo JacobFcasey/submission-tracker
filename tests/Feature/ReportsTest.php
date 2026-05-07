@@ -128,6 +128,10 @@ class ReportsTest extends TestCase
         $user = User::factory()->create();
         $user->givePermissionTo($permission);
 
+        // Reload user to pick up the newly assigned permission
+        $user = $user->fresh();
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $municipality = Municipality::factory()->create([
             'name' => 'Metro Alpha',
             'code' => 'MA1',

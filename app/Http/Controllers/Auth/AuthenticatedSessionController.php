@@ -149,13 +149,25 @@ class AuthenticatedSessionController extends Controller
             $request->user()->email,
         );
 
-        // Auto-sync CAPS reference data if no municipalities/companies exist yet
+        // Auto-sync CAPS reference data on every login with a 4-hour cooldown
         try {
             $hasMunicipalities = \App\Models\Municipality::exists();
             $hasCompanies = \App\Models\Company::exists();
+
             if (!$hasMunicipalities || !$hasCompanies) {
-                \Illuminate\Support\Facades\Log::info('[CAPS Sync] Auto-syncing reference data on login');
+                // First time: sync immediately (blocking)
+                \Illuminate\Support\Facades\Log::info('[CAPS Sync] First-time sync on login');
                 app(\App\Services\CaseyReferenceDataService::class)->syncAll();
+            } else {
+                // Subsequent logins: sync in background if data is stale (>4 hours)
+                $lastSync = \App\Models\Municipality::max('casey_synced_at');
+                $threshold = now()->subHours(4);
+                if (!$lastSync || \Illuminate\Support\Carbon::parse($lastSync)->lt($threshold)) {
+                    \Illuminate\Support\Facades\Log::info('[CAPS Sync] Background sync on login (data stale)');
+                    dispatch(function () {
+                        app(\App\Services\CaseyReferenceDataService::class)->syncAll();
+                    })->afterResponse();
+                }
             }
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('[CAPS Sync] Auto-sync failed: ' . $e->getMessage());

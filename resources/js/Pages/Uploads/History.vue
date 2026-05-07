@@ -11,7 +11,7 @@ const props = defineProps({
     statusOptions: Array,
     perPageOptions: Array,
     currentPerPage: Number,
-    premiumBatchData: Object,
+    counts: Object,
 });
 
 let Papa = null;
@@ -56,17 +56,56 @@ const form = ref({
     per_page: props.currentPerPage || 20,
 });
 
-// Watch for per_page changes
-watch(() => form.value.per_page, () => {
-    applyFilters();
-});
+let searchTimeout = null;
 
 const applyFilters = () =>
     router.get('/uploads/history', form.value, { preserveState: true, replace: true });
 
+// Dynamic search with debounce
+watch(() => form.value.search, () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => applyFilters(), 400);
+});
+
+watch(() => form.value.per_page, () => applyFilters());
+watch(() => form.value.status, () => applyFilters());
+
 const resetFilters = () => {
     form.value = { status: '', search: '', per_page: 20 };
     applyFilters();
+};
+
+/* ------------ Expandable rows ------------ */
+const expandedRows = ref(new Set());
+const toggleRow = (id) => {
+    const s = new Set(expandedRows.value);
+    s.has(id) ? s.delete(id) : s.add(id);
+    expandedRows.value = s;
+};
+
+/* ------------ CAPS Dispatch ------------ */
+const dispatchToCaps = (uploadId) => {
+    if (!confirm('Dispatch this submission to CAPS for processing?')) return;
+    router.post(`/uploads/${uploadId}/dispatch-to-caps`, {}, {
+        preserveState: true,
+        onSuccess: () => router.reload(),
+    });
+};
+
+const retryCapsDispatch = (uploadId) => {
+    if (!confirm('Retry dispatching this submission to CAPS?')) return;
+    router.post(`/uploads/${uploadId}/retry-caps`, {}, {
+        preserveState: true,
+        onSuccess: () => router.reload(),
+    });
+};
+
+const saveToCaps = (uploadId) => {
+    if (!confirm('Save this batch to CAPS? This will finalize the premiums.')) return;
+    router.post(`/uploads/${uploadId}/save-to-caps`, {}, {
+        preserveState: true,
+        onSuccess: () => router.reload(),
+    });
 };
 
 const exportData = () => {
@@ -278,7 +317,7 @@ const loadSpreadsheetData = async (url, filename) => {
             const text = await resp.text();
             const { headers, rows } = await parseCSVWithPapa(text);
             data.headers = headers;
-            data.rows = rows.slice(0, 500);
+            data.rows = rows;
             data.totalRows = rows.length;
         } else if (['xlsx', 'xlsm'].includes(ext)) {
             const xlsxReader = await ensureXlsxReaderLoaded();
@@ -317,7 +356,7 @@ const loadSpreadsheetData = async (url, filename) => {
                 data.headers = Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
             }
 
-            data.rows = json.slice(startRow, startRow + 500);
+            data.rows = json.slice(startRow);
             data.totalRows = Math.max(0, json.length - startRow);
         } else if (['xls', 'xlsb'].includes(ext)) {
             data.error = 'Legacy Excel format (.xls/.xlsb) is not supported in-browser. Please download the file or re-save as .xlsx.';
@@ -352,7 +391,7 @@ const loadSpreadsheetFromServer = async (downloadUrl) => {
         if (!sd.headers && !sd.rows) return null;
         return {
             headers: sd.headers || [],
-            rows: (sd.rows || []).slice(0, 500),
+            rows: sd.rows || [],
             totalRows: sd.total_rows || (sd.rows || []).length,
             error: null,
         };
@@ -1163,9 +1202,9 @@ const compareWorkingsAgainstImport = async (upload) => {
                 workingsStatus2: workingsStatusCounts.status2,
                 workingsStatus0: workingsStatusCounts.status0,
             },
-            importOnly: importOnly.slice(0, 200),
-            workingsOnly: workingsOnly.slice(0, 200),
-            premiumMismatch: premiumMismatch.slice(0, 200),
+            importOnly,
+            workingsOnly,
+            premiumMismatch,
             batchMatchInfo: computeBatchMatchInfo(upload, importRows),
         };
     } catch (error) {
@@ -1184,63 +1223,88 @@ const capsVerifyState = ref({
     error: null,
     uploadReference: '',
     companyName: '',
+    municipalityName: '',
     results: null,
+    searchQuery: '',
 });
 
-const capsVerifyFocus = ref(null);
+const capsVerifyFocus = ref('member_not_found');
 
-const capsVerifyCards = [
-    { key: 'member_found', label: 'Verified', badgeClass: 'bg-teal-100 text-teal-700', iconClass: 'text-green-500', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'policy_found', label: 'Policies OK', badgeClass: 'bg-blue-100 text-blue-700', iconClass: 'text-blue-500', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'member_not_found', label: 'Members Missing', badgeClass: 'bg-red-100 text-red-700', iconClass: 'text-orange-500', icon: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'policy_not_found', label: 'Policies Missing', badgeClass: 'bg-red-100 text-red-700', iconClass: 'text-red-500', icon: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' },
-    { key: 'premium_mismatch', label: 'Mismatch', badgeClass: 'bg-amber-100 text-amber-700', iconClass: 'text-amber-500', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
+const capsVerifyTabs = [
+    { key: 'member_not_found', label: 'Members Not in CAPS', shortLabel: 'Members Missing', activeBorder: 'border-red-500', iconBg: 'bg-red-100', iconColor: 'text-red-600', countColor: 'text-red-700', badgeBg: 'bg-red-500', icon: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z' },
+    { key: 'policy_not_found', label: 'Policies Not in CAPS', shortLabel: 'Policies Missing', activeBorder: 'border-orange-500', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', countColor: 'text-orange-700', badgeBg: 'bg-orange-500', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+    { key: 'premium_mismatch', label: 'Premium Amount Mismatches', shortLabel: 'Premium Mismatch', activeBorder: 'border-amber-500', iconBg: 'bg-amber-100', iconColor: 'text-amber-600', countColor: 'text-amber-700', badgeBg: 'bg-amber-500', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'member_found', label: 'Members Verified in CAPS', shortLabel: 'Members OK', activeBorder: 'border-green-500', iconBg: 'bg-green-100', iconColor: 'text-green-600', countColor: 'text-green-700', badgeBg: 'bg-green-500', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
+    { key: 'policy_found', label: 'Policies Verified in CAPS', shortLabel: 'Policies OK', activeBorder: 'border-teal-500', iconBg: 'bg-teal-100', iconColor: 'text-teal-600', countColor: 'text-teal-700', badgeBg: 'bg-teal-500', icon: 'M5 13l4 4L19 7' },
 ];
 
-const capsVerifyCurrentRows = computed(() => {
+const capsVerifyAllRows = computed(() => {
     const results = capsVerifyState.value.results;
     if (!results) return [];
-    if (!capsVerifyFocus.value) {
-        // Show all rows combined with status
-        const all = [];
-        for (const card of capsVerifyCards) {
-            for (const row of (results[card.key] || [])) {
-                all.push({ ...row, _status: card.label, _badgeClass: card.badgeClass });
-            }
-        }
-        // Deduplicate by policyCode + memberId (keep first occurrence = highest priority status)
-        const seen = new Set();
-        return all.filter(row => {
-            const key = `${row.memberId || ''}|${row.personelNumber || ''}|${row.policyCode || ''}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        }).slice(0, 500);
-    }
-    return (results[capsVerifyFocus.value] || []).map(row => ({
-        ...row,
-        _status: capsVerifyCards.find(c => c.key === capsVerifyFocus.value)?.label || '',
-        _badgeClass: capsVerifyCards.find(c => c.key === capsVerifyFocus.value)?.badgeClass || '',
-    })).slice(0, 500);
+    return results[capsVerifyFocus.value] || [];
 });
 
-const capsVerifyTotalPremium = computed(() => {
-    const results = capsVerifyState.value.results;
-    if (!results) return 0;
-    const allRows = [
-        ...(results.member_found || []),
-        ...(results.member_not_found || []),
-    ];
-    const seen = new Set();
-    let total = 0;
-    for (const row of allRows) {
-        const key = `${row.memberId || ''}|${row.policyCode || ''}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        total += Number(row.premiumAmount || 0);
+const capsVerifyCurrentRows = computed(() => {
+    let rows = capsVerifyAllRows.value;
+    const q = (capsVerifyState.value.searchQuery || '').trim().toLowerCase();
+    if (q) {
+        rows = rows.filter(r =>
+            (r.memberId || '').toLowerCase().includes(q) ||
+            (r.personelNumber || '').toLowerCase().includes(q) ||
+            (r.policyCode || '').toLowerCase().includes(q)
+        );
     }
-    return total;
+    return rows;
 });
+
+const capsVerifyScore = computed(() => {
+    const r = capsVerifyState.value.results;
+    if (!r) return 0;
+    const total = r.uploaded_rows_total || 1;
+    const issues = (r.member_not_found?.length || 0) + (r.policy_not_found?.length || 0) + (r.premium_mismatch?.length || 0);
+    if (total === 0) return 100;
+    return Math.round(Math.max(0, ((total - issues) / total) * 100));
+});
+
+const capsVerifyTotalIssues = computed(() => {
+    const r = capsVerifyState.value.results;
+    if (!r) return 0;
+    return (r.member_not_found?.length || 0) + (r.policy_not_found?.length || 0) + (r.premium_mismatch?.length || 0);
+});
+
+const capsVerifyTotalVerified = computed(() => {
+    const r = capsVerifyState.value.results;
+    if (!r) return 0;
+    return (r.member_found?.length || 0) + (r.policy_found?.length || 0);
+});
+
+const capsVerifyMismatchTotal = computed(() => {
+    const r = capsVerifyState.value.results;
+    if (!r) return 0;
+    return (r.premium_mismatch || []).reduce((sum, row) => {
+        const diff = Math.abs(Number(row.uploaded_premium ?? row.premiumAmount ?? 0) - Number(row.caps_premium ?? 0));
+        return sum + diff;
+    }, 0);
+});
+
+const exportVerificationCsv = () => {
+    const rows = capsVerifyAllRows.value;
+    if (!rows.length) return;
+    const headers = ['Member ID', 'Employee No', 'Policy Code', 'Uploaded Premium', 'CAPS Premium', 'Difference'];
+    const csvRows = rows.map(r => [
+        r.memberId || '', r.personelNumber || '', r.policyCode || '',
+        r.uploaded_premium ?? r.premiumAmount ?? '',
+        r.caps_premium ?? '',
+        capsVerifyFocus.value === 'premium_mismatch' ? (Number(r.uploaded_premium ?? r.premiumAmount ?? 0) - Number(r.caps_premium ?? 0)).toFixed(2) : '',
+    ]);
+    const csv = [headers, ...csvRows].map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `verification-${capsVerifyFocus.value}-${capsVerifyState.value.uploadReference || 'export'}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+};
 
 const compareWithCapsMembers = async (upload) => {
     capsVerifyState.value = {
@@ -1249,7 +1313,9 @@ const compareWithCapsMembers = async (upload) => {
         error: null,
         uploadReference: upload?.reference || '',
         companyName: upload?.company?.name || '',
+        municipalityName: upload?.municipality?.name || '',
         results: null,
+        searchQuery: '',
     };
 
     try {
@@ -1294,7 +1360,6 @@ const compareWithCapsMembers = async (upload) => {
                     personelNumber: r.personelNumber || '',
                     policyCode: r.policyCode || '',
                     premiumAmount: r.premiumAmount,
-                    companyName: r.companyName || '',
                 })),
             }),
         });
@@ -1316,8 +1381,12 @@ const compareWithCapsMembers = async (upload) => {
             results: json.results,
         };
 
-        // Default: show all rows (no filter)
-        capsVerifyFocus.value = null;
+        // Default to the tab with the most issues
+        const r = json.results;
+        if ((r.member_not_found?.length || 0) > 0) capsVerifyFocus.value = 'member_not_found';
+        else if ((r.policy_not_found?.length || 0) > 0) capsVerifyFocus.value = 'policy_not_found';
+        else if ((r.premium_mismatch?.length || 0) > 0) capsVerifyFocus.value = 'premium_mismatch';
+        else capsVerifyFocus.value = 'member_found';
 
     } catch (error) {
         capsVerifyState.value = {
@@ -1338,1074 +1407,179 @@ const showPrecomputedVerification = (upload) => {
         error: null,
         uploadReference: upload.reference || '',
         companyName: upload.company?.name || '',
+        municipalityName: upload.municipality?.name || '',
         results,
+        searchQuery: '',
     };
 
-    // Default: show all rows
-    capsVerifyFocus.value = null;
+    // Default to the tab with the most issues
+    if ((results.member_not_found?.length || 0) > 0) capsVerifyFocus.value = 'member_not_found';
+    else if ((results.policy_not_found?.length || 0) > 0) capsVerifyFocus.value = 'policy_not_found';
+    else if ((results.premium_mismatch?.length || 0) > 0) capsVerifyFocus.value = 'premium_mismatch';
+    else capsVerifyFocus.value = 'member_found';
 };
 
 const closeCapsVerify = () => {
-    capsVerifyState.value = { show: false, loading: false, error: null, uploadReference: '', companyName: '', results: null };
+    capsVerifyState.value = { show: false, loading: false, error: null, uploadReference: '', companyName: '', municipalityName: '', results: null, searchQuery: '' };
 };
 </script>
 
 <template>
     <AppLayout>
         <div class="px-6 py-6">
-            <div class="flex items-center justify-between">
-                <h2 class="text-2xl font-bold">Uploads History</h2>
-                <Link href="/uploads" class="text-sm font-medium text-blue-600 hover:text-blue-800">
-                    View Recent →
-                </Link>
+
+            <!-- Flash -->
+            <div v-if="page.props.flash?.success" class="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                <svg class="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd"/></svg>
+                {{ page.props.flash.success }}
+            </div>
+            <div v-if="page.props.flash?.error" class="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                <svg class="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+                {{ page.props.flash.error }}
+            </div>
+
+            <!-- Header + Stats -->
+            <div class="flex items-start justify-between mb-6">
+                <div>
+                    <h1 class="text-xl font-bold text-slate-900">View Premiums</h1>
+                    <p class="text-sm text-slate-500 mt-0.5">Premium batch submission history</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="exportData" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        Export
+                    </button>
+                    <Link href="/uploads" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 shadow-sm transition">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                        New Upload
+                    </Link>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-4 gap-4 mb-6">
+                <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div class="text-sm text-slate-500">Total Submissions</div>
+                    <div class="text-2xl font-bold text-slate-900 mt-1">{{ counts?.total ?? 0 }}</div>
+                </div>
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                    <div class="text-sm text-amber-700">Needs Review</div>
+                    <div class="text-2xl font-bold text-amber-800 mt-1">{{ counts?.needs_review ?? 0 }}</div>
+                </div>
+                <div class="rounded-xl border border-green-200 bg-green-50 p-4 shadow-sm">
+                    <div class="text-sm text-green-700">Saved to CAPS</div>
+                    <div class="text-2xl font-bold text-green-800 mt-1">{{ counts?.saved ?? 0 }}</div>
+                </div>
+                <div class="rounded-xl border border-red-200 bg-red-50 p-4 shadow-sm">
+                    <div class="text-sm text-red-700">Failed</div>
+                    <div class="text-2xl font-bold text-red-800 mt-1">{{ counts?.failed ?? 0 }}</div>
+                </div>
             </div>
 
             <!-- Filters -->
-            <div class="mt-6 rounded-xl border bg-white p-4 shadow sm:p-6">
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-5">
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700">Status</label>
-                        <select
-                            v-model="form.status"
-                            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                            @change="applyFilters"
-                        >
-                            <option value="">All Statuses</option>
-                            <option v-for="s in statusOptions || []" :key="s" :value="s">
-                                {{ s }}
-                            </option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700">Search</label>
-                        <input
-                            v-model="form.search"
-                            placeholder="Reference, company, municipality, or user..."
-                            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                            @keyup.enter="applyFilters"
-                        />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700">Show</label>
-                        <select
-                            v-model="form.per_page"
-                            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        >
-                            <option v-for="option in perPageOptions || [20, 50, 100, 200, 500]"
-                                    :key="option"
-                                    :value="option">
-                                {{ option }} records
-                            </option>
-                        </select>
-                    </div>
-                    <div class="flex items-end gap-2 md:col-span-2">
-                        <button
-                            class="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                            @click="applyFilters"
-                        >
-                            Apply
-                        </button>
-                        <button
-                            class="flex-1 rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-                            @click="resetFilters"
-                        >
-                            Reset
-                        </button>
-                        <button
-                            class="flex-1 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-                            @click="exportData"
-                        >
-                            Export
-                        </button>
-                    </div>
-                </div>
+            <div class="flex items-center gap-3 mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                <svg class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+                <select v-model="form.status" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500">
+                    <option value="">All</option>
+                    <option value="caps_processing">Needs Review</option>
+                    <option value="completed">Saved</option>
+                </select>
+                <input v-model="form.search" placeholder="Search by reference, company..." @keyup.enter="applyFilters"
+                       class="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500" />
+                <select v-model="form.per_page" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500">
+                    <option v-for="o in perPageOptions || [20,50,100]" :key="o" :value="o">{{ o }} rows</option>
+                </select>
+                <button @click="resetFilters" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition">Clear</button>
             </div>
 
-            <!-- Empty State -->
-            <div
-                v-if="!uploads?.data?.length"
-                class="mt-6 rounded-xl border bg-white p-8 text-center text-slate-600 shadow"
-            >
-                No uploads found matching your criteria.
+            <!-- Empty -->
+            <div v-if="!uploads?.data?.length" class="rounded-xl border border-slate-200 bg-white py-20 text-center shadow-sm">
+                <svg class="mx-auto h-10 w-10 text-slate-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+                <p class="text-sm text-slate-500">No submissions found</p>
             </div>
 
-            <!-- Cards -->
-            <div v-if="uploads?.data?.length" class="mt-6 space-y-3">
-                <div
-                    v-for="g in grouped"
-                    :key="g.companyId"
-                    class="rounded-xl border bg-white shadow"
-                >
-                    <!-- Card header -->
-                    <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div class="min-w-0">
-                            <div class="flex items-center gap-2">
-                                <h3 class="truncate text-base font-semibold">
-                                    {{ g.company?.name || '—' }}
-                                </h3>
-                                <span
-                                    :class="statusPill(g.latest.status)"
-                                    class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
-                                >
-                                    {{ g.latest.status }}
+            <!-- Table -->
+            <div v-if="uploads?.data?.length" class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 border-b border-slate-200 text-left">
+                        <tr>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-14"># &darr;</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">User</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">File</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Total</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">New</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Upd</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Can</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Err</th>
+                            <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <tr v-for="u in (uploads?.data || [])" :key="u.id" class="hover:bg-gray-50">
+                            <td class="px-4 py-2.5 font-mono text-xs text-gray-400">{{ u.id }}</td>
+                            <td class="px-4 py-2.5">
+                                <span class="inline-block rounded px-2 py-0.5 text-[11px] font-medium"
+                                      :class="{
+                                          'bg-green-50 text-green-700': u.caps_dispatch_status === 'completed',
+                                          'bg-amber-50 text-amber-700': u.caps_dispatch_status === 'caps_processing',
+                                          'bg-red-50 text-red-700': u.caps_dispatch_status === 'failed',
+                                          'bg-gray-100 text-gray-600': !u.caps_dispatch_status || u.caps_dispatch_status === 'draft',
+                                          'bg-blue-50 text-blue-700': u.caps_dispatch_status === 'dispatched',
+                                      }">
+                                    {{ u.caps_dispatch_status === 'caps_processing' ? 'Review' : u.caps_dispatch_status === 'completed' ? 'Saved' : u.status }}
                                 </span>
-                            </div>
-                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                                <span class="truncate">
-                                    <span class="font-medium">Municipality:</span>
-                                    {{ g.municipality?.name || '—' }}
-                                </span>
-                                <span class="hidden sm:inline">•</span>
-                                <span class="truncate">
-                                    <span class="font-medium">Latest Ref:</span>
-                                    <span class="font-mono">{{ g.latest.reference }}</span>
-                                </span>
-                                <span class="hidden sm:inline">•</span>
-                                <span>
-                                    <span class="font-medium">Submitted:</span>
-                                    {{ formatDate(g.latest.submitted_at) }}
-                                </span>
-                                <template v-if="g.latest.user">
-                                    <span class="hidden sm:inline">•</span>
-                                    <div class="flex items-center gap-1">
-                                        <div class="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center text-[10px]">
-                                            {{ getUserAvatar(g.latest.user).initials }}
-                                        </div>
-                                        <span class="text-xs text-slate-600">{{ g.latest.user.name }}</span>
-                                    </div>
-                                </template>
-                                <template v-if="getReuploadReason(g.latest)">
-                                    <span class="hidden sm:inline">•</span>
-                                    <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
-                                        Reason: {{ getReuploadReason(g.latest) }}
-                                    </span>
-                                </template>
-                            </div>
-                            <div class="mt-2 flex flex-wrap gap-2">
-                                <button
-                                    @click="openAllFilesPreview(g.latest)"
-                                    class="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] text-blue-700 hover:bg-blue-200 flex items-center gap-1"
-                                >
-                                    <span>All Files: {{ totalFiles(g.latest) }}</span>
-                                    <span class="text-xs">📁</span>
-                                </button>
-                                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
-                                    Emails: {{ emailCount(g.latest) }}
-                                </span>
-                                <span
-                                    class="rounded-full px-2 py-0.5 text-[11px]"
-                                    :class="hasSystems(g.latest)
-                                        ? 'bg-emerald-100 text-emerald-700'
-                                        : 'bg-slate-100 text-slate-700'"
-                                >
-                                    System Import: {{ hasSystems(g.latest) ? 'Yes' : 'No' }}
-                                </span>
-                                <span
-                                    class="rounded-full px-2 py-0.5 text-[11px]"
-                                    :class="hasWorkings(g.latest)
-                                        ? 'bg-emerald-100 text-emerald-700'
-                                        : 'bg-slate-100 text-slate-700'"
-                                >
-                                    Workings: {{ hasWorkings(g.latest) ? 'Yes' : 'No' }}
-                                </span>
-                                <button
-                                    v-if="hasWorkings(g.latest)"
-                                    @click="compareWorkingsAgainstImport(g.latest)"
-                                    class="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] text-indigo-700 hover:bg-indigo-200"
-                                >
-                                    Compare CAPS vs Import
-                                </button>
-                                <button
-                                    v-if="g.latest?.caps_verification"
-                                    @click="showPrecomputedVerification(g.latest)"
-                                    class="rounded-full bg-teal-100 px-2 py-0.5 text-[11px] text-teal-700 hover:bg-teal-200 flex items-center gap-1"
-                                >
-                                    <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd"/></svg>
-                                    Verification Results
-                                </button>
-                                <button
-                                    v-else-if="g.latest?.systems_import_file_url || hasWorkings(g.latest)"
-                                    @click="compareWithCapsMembers(g.latest)"
-                                    class="rounded-full bg-teal-100 px-2 py-0.5 text-[11px] text-teal-700 hover:bg-teal-200"
-                                >
-                                    Verify Members &amp; Policies
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="flex shrink-0 items-center gap-2 self-start sm:self-auto">
-                            <button
-                                class="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                                @click="toggle(g.companyId)"
-                                :aria-expanded="isOpen(g.companyId)"
-                            >
-                                <span>{{ isOpen(g.companyId) ? 'Hide History' : 'Show History' }}</span>
-                                <span>{{ isOpen(g.companyId) ? '▴' : '▾' }}</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Expanded history -->
-                    <transition name="fade" mode="out-in">
-                        <div v-if="isOpen(g.companyId)" class="border-t bg-slate-50/60 p-3 sm:p-4">
-                            <div class="mb-2 text-xs text-slate-500">History (newest → oldest)</div>
-
-                            <!-- Compact table for history -->
-                            <div class="overflow-x-auto rounded-lg border bg-white">
-                                <table class="w-full table-fixed text-xs">
-                                    <colgroup>
-                                        <col class="w-32" />
-                                        <col class="w-24" />
-                                        <col class="w-32" />
-                                        <col class="w-48" />
-                                        <col class="w-28" />
-                                        <col class="w-28" />
-                                        <col class="w-20" />
-                                    </colgroup>
-                                    <thead class="bg-slate-100">
-                                    <tr class="text-left">
-                                        <th class="px-3 py-2">Reference</th>
-                                        <th class="px-3 py-2">Status</th>
-                                        <th class="px-3 py-2">Uploaded By</th>
-                                        <th class="px-3 py-2">Files / Reason</th>
-                                        <th class="px-3 py-2">Import</th>
-                                        <th class="px-3 py-2">Submitted</th>
-                                        <th class="px-3 py-2">Actions</th>
-                                    </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-slate-200">
-                                    <tr v-for="h in g.history" :key="h.id">
-                                        <td class="px-3 py-2 font-mono whitespace-nowrap">
-                                            {{ h.reference }}
-                                        </td>
-                                        <td class="px-3 py-2">
-                                                <span
-                                                    :class="statusPill(h.status)"
-                                                    class="inline-block rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                                >
-                                                    {{ h.status }}
-                                                </span>
-                                        </td>
-                                        <td class="px-3 py-2">
-                                            <div v-if="h.user" class="flex items-center gap-2">
-                                                <div class="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center text-[9px]">
-                                                    {{ getUserAvatar(h.user).initials }}
-                                                </div>
-                                                <div class="min-w-0">
-                                                    <div class="truncate text-[10px] font-medium">{{ h.user.name }}</div>
-                                                    <div class="text-[9px] text-slate-500 truncate">
-                                                        {{ formatTimeAgo(h.submitted_at_formatted) }}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <span v-else class="text-gray-400 text-xs">—</span>
-                                        </td>
-                                        <td class="px-3 py-2">
-                                            <div class="flex flex-wrap items-center gap-2">
-                                                    <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-700">
-                                                        Emails: {{ emailCount(h) }}
-                                                    </span>
-                                                <span
-                                                    v-if="hasSystems(h)"
-                                                    class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700"
-                                                >
-                                                        System
-                                                    </span>
-                                                <span
-                                                    v-if="hasWorkings(h)"
-                                                    class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700"
-                                                >
-                                                        Workings
-                                                    </span>
-                                            </div>
-                                            <div v-if="getReuploadReason(h)" class="mt-1 break-words whitespace-normal">
-                                                    <span class="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
-                                                        {{ getReuploadReason(h) }}
-                                                    </span>
-                                            </div>
-
-                                            <!-- Quick list of email filenames -->
-                                            <div v-if="h.original_file_names?.length" class="mt-1 flex flex-wrap gap-2">
-                                                <template v-for="(name, i) in h.original_file_names.slice(0, 2)" :key="i">
-                                                    <a
-                                                        class="max-w-[12rem] cursor-pointer truncate text-blue-600 hover:text-blue-800 hover:underline"
-                                                        @click.prevent="openPreview(h.original_file_urls?.[i], name, h.preview_urls?.[i], h.email_preview_data_urls?.[i])"
-                                                    >
-                                                        {{ name }}
-                                                    </a>
-                                                </template>
-                                                <span v-if="h.original_file_names.length > 2" class="text-slate-500">
-                                                        +{{ h.original_file_names.length - 2 }} more
-                                                    </span>
-                                            </div>
-                                        </td>
-                                        <td class="px-3 py-2 whitespace-nowrap">
-                                            {{ formatDate(h.system_import_date) }}
-                                        </td>
-                                        <td class="px-3 py-2 whitespace-nowrap">
-                                            <div class="text-[10px]">{{ formatDateTime(h.submitted_at_formatted) }}</div>
-                                            <div class="text-[9px] text-slate-500">
-                                                {{ formatTimeAgo(h.submitted_at_formatted) }}
-                                            </div>
-                                        </td>
-                                        <td class="px-3 py-2 whitespace-nowrap">
-                                            <button
-                                                @click="openAllFilesPreview(h)"
-                                                class="rounded-lg bg-blue-100 px-2 py-1 text-[10px] text-blue-700 hover:bg-blue-200 flex items-center gap-1"
-                                                :disabled="totalFiles(h) === 0"
-                                                :class="{ 'opacity-50 cursor-not-allowed': totalFiles(h) === 0 }"
-                                            >
-                                                <span>📁</span>
-                                                <span>{{ totalFiles(h) }}</span>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </transition>
-                </div>
-            </div>
-
-            <!-- ==================== CAPS Verification Modal (Batch-style) ==================== -->
-            <div
-                v-if="capsVerifyState.show"
-                class="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4"
-                @click.self="closeCapsVerify"
-            >
-                <div class="relative flex max-h-[94vh] w-full max-w-7xl flex-col rounded-xl bg-gray-50 shadow-2xl overflow-hidden">
-
-                    <!-- Header -->
-                    <div class="bg-white px-6 py-5 border-b">
-                        <div class="flex items-start justify-between">
-                            <div class="flex items-center gap-4">
-                                <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-teal-50">
-                                    <svg class="h-6 w-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                                    </svg>
+                            </td>
+                            <td class="px-4 py-2.5 whitespace-nowrap text-xs text-gray-700">{{ formatDateTime(u.submitted_at_formatted) }}</td>
+                            <td class="px-4 py-2.5">
+                                <div v-if="u.user" class="flex items-center gap-2">
+                                    <div class="h-6 w-6 rounded-full bg-gray-200 flex items-center justify-center text-[10px] font-semibold text-gray-600">{{ getUserAvatar(u.user).initials }}</div>
+                                    <span class="text-xs text-gray-700">{{ u.user.name }}</span>
                                 </div>
-                                <div>
-                                    <div class="flex items-center gap-3">
-                                        <h3 class="text-lg font-bold text-gray-900">Upload #{{ capsVerifyState.uploadReference }}</h3>
-                                        <span v-if="capsVerifyState.results" class="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Pending</span>
-                                    </div>
-                                    <p v-if="capsVerifyState.results" class="text-sm text-gray-500 mt-0.5">
-                                        {{ capsVerifyState.results.uploaded_rows_total }} total records
-                                    </p>
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <button @click="closeCapsVerify" class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                                    Close
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Metadata row -->
-                    <div v-if="capsVerifyState.results" class="bg-white border-b px-6 py-3 flex flex-wrap items-center gap-x-8 gap-y-1 text-sm text-gray-600">
-                        <span class="flex items-center gap-1.5">
-                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                            Company <strong class="text-gray-900 ml-1">{{ capsVerifyState.companyName || '—' }}</strong>
-                        </span>
-                        <span class="flex items-center gap-1.5">
-                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                            Members checked <strong class="text-gray-900 ml-1">{{ capsVerifyState.results.caps_members_total }}</strong>
-                        </span>
-                        <span class="flex items-center gap-1.5">
-                            <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            Policies checked <strong class="text-gray-900 ml-1">{{ capsVerifyState.results.caps_policies_total }}</strong>
-                        </span>
-                    </div>
-
-                    <!-- Loading -->
-                    <div v-if="capsVerifyState.loading" class="flex flex-col items-center justify-center py-20 bg-white">
-                        <div class="h-14 w-14 animate-spin rounded-full border-4 border-teal-100 border-t-teal-600"></div>
-                        <p class="mt-4 text-sm font-medium text-gray-600">Verifying against CAPS...</p>
-                        <p class="mt-1 text-xs text-gray-400">Checking members and policies</p>
-                    </div>
-
-                    <!-- Error -->
-                    <div v-else-if="capsVerifyState.error" class="p-8 bg-white">
-                        <div class="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
-                            <svg class="mx-auto h-10 w-10 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            <p class="mt-3 text-sm font-medium text-red-800">Verification Failed</p>
-                            <p class="mt-1 text-sm text-red-600">{{ capsVerifyState.error }}</p>
-                        </div>
-                    </div>
-
-                    <!-- Results -->
-                    <div v-else-if="capsVerifyState.results" class="flex flex-col overflow-hidden">
-
-                        <!-- Summary cards -->
-                        <div class="grid grid-cols-5 gap-4 px-6 py-5">
-                            <button
-                                v-for="card in capsVerifyCards"
-                                :key="card.key"
-                                @click="capsVerifyFocus = capsVerifyFocus === card.key ? null : card.key"
-                                :class="[
-                                    'relative flex flex-col items-center rounded-lg border py-4 px-3 transition-all cursor-pointer',
-                                    capsVerifyFocus === card.key
-                                        ? 'border-teal-400 bg-white shadow-md ring-1 ring-teal-400'
-                                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm',
-                                ]"
-                            >
-                                <svg class="h-5 w-5 mb-2" :class="card.iconClass" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="card.icon" />
-                                </svg>
-                                <span class="text-2xl font-bold text-gray-900">
-                                    {{ (capsVerifyState.results[card.key] || []).length }}
-                                </span>
-                                <span class="text-xs font-medium text-gray-500 mt-0.5">{{ card.label }}</span>
-                            </button>
-                        </div>
-
-                        <!-- CAPS data warnings -->
-                        <div v-if="capsVerifyState.results.caps_members_error || capsVerifyState.results.caps_policies_error" class="px-6 pb-3 space-y-2">
-                            <div v-if="capsVerifyState.results.caps_members_error" class="flex items-center gap-2 rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800">
-                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                Members: {{ capsVerifyState.results.caps_members_error }}
-                            </div>
-                            <div v-if="capsVerifyState.results.caps_policies_error" class="flex items-center gap-2 rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800">
-                                <svg class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                Policies: {{ capsVerifyState.results.caps_policies_error }}
-                            </div>
-                        </div>
-
-                        <!-- Table area -->
-                        <div class="flex-1 overflow-hidden bg-white border-t mx-6 mb-4 rounded-lg border">
-                            <!-- Table header with total premium -->
-                            <div class="flex items-center justify-between px-4 py-3 border-b bg-gray-50/50">
-                                <span class="text-sm text-gray-500">
-                                    {{ capsVerifyFocus ? capsVerifyCards.find(c => c.key === capsVerifyFocus)?.label : 'All Records' }}
-                                    &mdash; {{ capsVerifyCurrentRows.length }} records
-                                </span>
-                                <span class="inline-flex items-center rounded-full border border-gray-300 bg-white px-3 py-1 text-sm font-semibold text-gray-800">
-                                    Total Premium: R {{ capsVerifyTotalPremium.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
-                                </span>
-                            </div>
-
-                            <div class="overflow-auto" style="max-height: 46vh">
-                                <table v-if="capsVerifyCurrentRows.length" class="w-full text-sm">
-                                    <thead class="sticky top-0 bg-gray-50 z-10">
-                                        <tr class="text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                                            <th class="py-3 pl-4 pr-3">Employee No</th>
-                                            <th class="py-3 pr-3">ID Number</th>
-                                            <th class="py-3 pr-3">Policy Code</th>
-                                            <th class="py-3 pr-3">Status</th>
-                                            <th class="py-3 pr-3">Company</th>
-                                            <th class="py-3 pr-3 text-right">Amount Payable</th>
-                                            <th class="py-3 pr-4 text-right">Premium</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-gray-100">
-                                        <tr
-                                            v-for="(row, idx) in capsVerifyCurrentRows"
-                                            :key="idx"
-                                            class="hover:bg-gray-50/70 transition-colors"
-                                        >
-                                            <td class="py-2.5 pl-4 pr-3 text-sm text-gray-600">{{ row.personelNumber || '—' }}</td>
-                                            <td class="py-2.5 pr-3 font-mono text-sm text-gray-900 font-medium">{{ row.memberId || '—' }}</td>
-                                            <td class="py-2.5 pr-3 font-mono text-sm font-bold text-gray-900">{{ row.policyCode || '—' }}</td>
-                                            <td class="py-2.5 pr-3">
-                                                <span :class="['inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium', row._badgeClass]">
-                                                    {{ row._status }}
-                                                </span>
-                                            </td>
-                                            <td class="py-2.5 pr-3 text-sm text-gray-600">{{ row.companyName || '—' }}</td>
-                                            <td class="py-2.5 pr-3 text-right text-sm text-gray-500">
-                                                {{ row.caps_premium != null ? `R ${Number(row.caps_premium).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : 'R 0,00' }}
-                                            </td>
-                                            <td class="py-2.5 pr-4 text-right text-sm font-semibold text-teal-600">
-                                                R {{ Number(row.premiumAmount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 }) }}
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                                <div v-else class="flex flex-col items-center justify-center py-16 text-center">
-                                    <div class="flex h-14 w-14 items-center justify-center rounded-full bg-green-100 mb-3">
-                                        <svg class="h-7 w-7 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </div>
-                                    <p class="text-sm font-medium text-gray-700">All clear</p>
-                                    <p class="text-xs text-gray-400 mt-1">No records in this category</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div
-                v-if="compareState.show"
-                class="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-                @click.self="closeCompareModal"
-            >
-                <div class="caps-compare-modal max-h-[90vh] w-full max-w-7xl overflow-auto rounded-xl bg-white shadow-2xl">
-                    <div class="caps-compare-header sticky top-0 flex items-center justify-between border-b bg-white px-6 py-4">
-                        <div>
-                            <h3 class="text-lg font-semibold text-slate-900">CAPS Comparison</h3>
-                            <p class="text-sm text-slate-600">
-                                Upload: <span class="font-mono">{{ compareState.uploadReference }}</span>
-                            </p>
-                        </div>
-                        <button
-                            class="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-                            @click="closeCompareModal"
-                        >
-                            Close
-                        </button>
-                    </div>
-
-                    <div class="space-y-4 p-6">
-                        <div v-if="compareState.loading" class="text-sm text-slate-700">Comparing records...</div>
-                        <p v-else-if="compareState.error" class="text-sm text-red-700">{{ compareState.error }}</p>
-                        <template v-else>
-                            <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
-                                <div class="rounded-lg border bg-blue-50 p-3">
-                                    <div class="text-xs text-blue-700">Import Records</div>
-                                    <div class="text-lg font-semibold text-blue-800">{{ compareState.counts.importRecords }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-cyan-50 p-3">
-                                    <div class="text-xs text-cyan-700">Workings Records</div>
-                                    <div class="text-lg font-semibold text-cyan-800">{{ compareState.counts.workingsRecords }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-slate-50 p-3">
-                                    <div class="text-xs text-slate-500">Matched</div>
-                                    <div class="text-lg font-semibold text-slate-900">{{ compareState.counts.matched }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-red-50 p-3">
-                                    <div class="text-xs text-red-700">Import Only</div>
-                                    <div class="text-lg font-semibold text-red-800">{{ compareState.counts.importOnly }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-amber-50 p-3">
-                                    <div class="text-xs text-amber-700">Workings Only</div>
-                                    <div class="text-lg font-semibold text-amber-800">{{ compareState.counts.workingsOnly }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-indigo-50 p-3">
-                                    <div class="text-xs text-indigo-700">Premium Mismatches</div>
-                                    <div class="text-lg font-semibold text-indigo-800">{{ compareState.counts.premiumMismatch }}</div>
-                                </div>
-                            </div>
-
-                            <div class="grid grid-cols-1 gap-3 md:grid-cols-6">
-                                <div class="rounded-lg border bg-emerald-50 p-3">
-                                    <div class="text-xs text-emerald-700">Import 1 (New/Update)</div>
-                                    <div class="text-lg font-semibold text-emerald-800">{{ compareState.counts.importStatus1 }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-amber-50 p-3">
-                                    <div class="text-xs text-amber-700">Import 2 (Reinstate)</div>
-                                    <div class="text-lg font-semibold text-amber-800">{{ compareState.counts.importStatus2 }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-rose-50 p-3">
-                                    <div class="text-xs text-rose-700">Import 0 (Cancel)</div>
-                                    <div class="text-lg font-semibold text-rose-800">{{ compareState.counts.importStatus0 }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-emerald-50 p-3">
-                                    <div class="text-xs text-emerald-700">Workings 1</div>
-                                    <div class="text-lg font-semibold text-emerald-800">{{ compareState.counts.workingsStatus1 }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-amber-50 p-3">
-                                    <div class="text-xs text-amber-700">Workings 2</div>
-                                    <div class="text-lg font-semibold text-amber-800">{{ compareState.counts.workingsStatus2 }}</div>
-                                </div>
-                                <div class="rounded-lg border bg-rose-50 p-3">
-                                    <div class="text-xs text-rose-700">Workings 0</div>
-                                    <div class="text-lg font-semibold text-rose-800">{{ compareState.counts.workingsStatus0 }}</div>
-                                </div>
-                            </div>
-
-                            <div class="rounded-lg border bg-white">
-                                <div class="border-b bg-slate-50 px-3 py-2">
-                                    <div class="flex flex-wrap items-center justify-between gap-2">
-                                        <div class="flex flex-wrap gap-2">
-                                            <button
-                                                @click="compareFocus = 'mismatch'"
-                                                :class="compareFocus === 'mismatch' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-700 border-slate-300'"
-                                                class="rounded-md border px-3 py-1 text-xs font-medium"
-                                            >
-                                                Premium Mismatch ({{ compareState.counts.premiumMismatch }})
-                                            </button>
-                                            <button
-                                                @click="compareFocus = 'importOnly'"
-                                                :class="compareFocus === 'importOnly' ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-700 border-slate-300'"
-                                                class="rounded-md border px-3 py-1 text-xs font-medium"
-                                            >
-                                                Import Only ({{ compareState.counts.importOnly }})
-                                            </button>
-                                            <button
-                                                @click="compareFocus = 'workingsOnly'"
-                                                :class="compareFocus === 'workingsOnly' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-700 border-slate-300'"
-                                                class="rounded-md border px-3 py-1 text-xs font-medium"
-                                            >
-                                                Workings Only ({{ compareState.counts.workingsOnly }})
-                                            </button>
-                                        </div>
-                                        <button
-                                            @click="exportCompareFocusCsv"
-                                            :disabled="!compareFilteredRows.length"
-                                            class="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            Export CSV
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="border-b bg-white px-3 py-2">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <input
-                                            v-model="compareSearch"
-                                            type="text"
-                                            placeholder="Search member ID, personnel no, policy code..."
-                                            class="min-w-[16rem] flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                                        />
-                                        <select
-                                            v-model="compareRowsPerPage"
-                                            class="rounded-md border border-slate-300 px-2 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
-                                        >
-                                            <option :value="20">20 rows</option>
-                                            <option :value="50">50 rows</option>
-                                            <option :value="100">100 rows</option>
-                                        </select>
-                                        <span class="text-xs text-slate-500">
-                                            {{ compareFilteredRows.length }} result{{ compareFilteredRows.length !== 1 ? 's' : '' }}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div v-if="compareFilteredRows.length" class="overflow-x-auto caps-focus-table-wrap">
-                                    <table class="w-full table-auto text-xs caps-focus-table">
-                                        <thead class="bg-slate-100">
-                                        <tr>
-                                            <th class="px-3 py-2 text-left">Member ID</th>
-                                            <th class="px-3 py-2 text-left">Personnel No</th>
-                                            <th class="px-3 py-2 text-left">Policy Code</th>
-                                            <th v-if="compareFocus === 'mismatch'" class="px-3 py-2 text-left">Import Amount</th>
-                                            <th v-if="compareFocus === 'mismatch'" class="px-3 py-2 text-left">Workings Amount</th>
-                                            <th v-else class="px-3 py-2 text-left">Premium</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        <tr v-for="(row, idx) in comparePagedRows" :key="`${row.key}-${idx}`" class="border-t">
-                                            <td class="px-3 py-2 font-mono">{{ row.memberId || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.personelNumber || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.policyCode || '—' }}</td>
-                                            <td v-if="compareFocus === 'mismatch'" class="px-3 py-2">{{ row.importAmount ?? '—' }}</td>
-                                            <td v-if="compareFocus === 'mismatch'" class="px-3 py-2">{{ row.workingsAmount ?? '—' }}</td>
-                                            <td v-else class="px-3 py-2">{{ row.premiumAmount ?? '—' }}</td>
-                                        </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div v-else class="px-4 py-6 text-sm text-slate-600">
-                                    No rows found for {{ compareFocusTitle.toLowerCase() }}.
-                                </div>
-                                <div v-if="compareFilteredRows.length > compareRowsPerPage" class="flex items-center justify-between border-t bg-slate-50 px-3 py-2">
-                                    <span class="text-xs text-slate-600">
-                                        Page {{ comparePage }} of {{ compareTotalPages }}
-                                    </span>
-                                    <div class="flex gap-2">
-                                        <button
-                                            @click="comparePage = Math.max(1, comparePage - 1)"
-                                            :disabled="comparePage <= 1"
-                                            class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                                        >
-                                            Previous
-                                        </button>
-                                        <button
-                                            @click="comparePage = Math.min(compareTotalPages, comparePage + 1)"
-                                            :disabled="comparePage >= compareTotalPages"
-                                            class="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                                        >
-                                            Next
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div v-if="compareState.batchMatchInfo" class="rounded-lg border bg-slate-50 p-3 text-xs text-slate-700">
-                                <div class="mb-2 font-semibold text-slate-800">Batch Match Summary</div>
-                                <div class="grid grid-cols-1 gap-2 md:grid-cols-3">
-                                    <div>
-                                        <div class="text-slate-500">Upload Date/Time</div>
-                                        <div>{{ compareState.batchMatchInfo.uploadDateTime || '—' }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-slate-500">Closest Batch Date/Time</div>
-                                        <div>{{ compareState.batchMatchInfo.closestBatchDateTime || '—' }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-slate-500">Time Difference (hours)</div>
-                                        <div>{{ compareState.batchMatchInfo.closestHoursDiff ?? '—' }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-slate-500">Matched Username</div>
-                                        <div>{{ compareState.batchMatchInfo.matchedUsername || 'No direct match' }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-slate-500">Matched Import Filename</div>
-                                        <div class="break-all">{{ compareState.batchMatchInfo.matchedFileName || 'No direct match' }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-slate-500">Batch Records Considered</div>
-                                        <div>{{ compareState.batchMatchInfo.rowCount }}</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <details class="rounded-lg border bg-white">
-                                <summary class="cursor-pointer border-b bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700">
-                                    Advanced Split Tables
-                                </summary>
-
-                            <div v-if="compareState.premiumMismatch.length" class="rounded-lg border">
-                                <div class="border-b bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700">Premium Mismatches (top 200)</div>
-                                <div class="overflow-x-auto">
-                                    <table class="w-full table-auto text-xs">
-                                        <thead class="bg-slate-100">
-                                        <tr>
-                                            <th class="px-3 py-2 text-left">Member ID</th>
-                                            <th class="px-3 py-2 text-left">Personnel No</th>
-                                            <th class="px-3 py-2 text-left">Policy Code</th>
-                                            <th class="px-3 py-2 text-left">Import Amount</th>
-                                            <th class="px-3 py-2 text-left">Workings Amount</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        <tr v-for="(row, idx) in compareState.premiumMismatch" :key="`${row.key}-${idx}`" class="border-t">
-                                            <td class="px-3 py-2 font-mono">{{ row.memberId || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.personelNumber || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.policyCode || '—' }}</td>
-                                            <td class="px-3 py-2">{{ row.importAmount ?? '—' }}</td>
-                                            <td class="px-3 py-2">{{ row.workingsAmount ?? '—' }}</td>
-                                        </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            <div v-if="compareState.importOnly.length" class="rounded-lg border">
-                                <div class="border-b bg-red-50 px-3 py-2 text-xs font-medium text-red-700">Import Only (top 200)</div>
-                                <div class="overflow-x-auto">
-                                    <table class="w-full table-auto text-xs">
-                                        <thead class="bg-slate-100">
-                                        <tr>
-                                            <th class="px-3 py-2 text-left">Member ID</th>
-                                            <th class="px-3 py-2 text-left">Personnel No</th>
-                                            <th class="px-3 py-2 text-left">Policy Code</th>
-                                            <th class="px-3 py-2 text-left">Premium</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        <tr v-for="(row, idx) in compareState.importOnly" :key="`${row.key}-${idx}`" class="border-t">
-                                            <td class="px-3 py-2 font-mono">{{ row.memberId || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.personelNumber || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.policyCode || '—' }}</td>
-                                            <td class="px-3 py-2">{{ row.premiumAmount ?? '—' }}</td>
-                                        </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            <div v-if="compareState.workingsOnly.length" class="rounded-lg border">
-                                <div class="border-b bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">Workings Only (top 200)</div>
-                                <div class="overflow-x-auto">
-                                    <table class="w-full table-auto text-xs">
-                                        <thead class="bg-slate-100">
-                                        <tr>
-                                            <th class="px-3 py-2 text-left">Member ID</th>
-                                            <th class="px-3 py-2 text-left">Personnel No</th>
-                                            <th class="px-3 py-2 text-left">Policy Code</th>
-                                            <th class="px-3 py-2 text-left">Premium</th>
-                                        </tr>
-                                        </thead>
-                                        <tbody>
-                                        <tr v-for="(row, idx) in compareState.workingsOnly" :key="`${row.key}-${idx}`" class="border-t">
-                                            <td class="px-3 py-2 font-mono">{{ row.memberId || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.personelNumber || '—' }}</td>
-                                            <td class="px-3 py-2 font-mono">{{ row.policyCode || '—' }}</td>
-                                            <td class="px-3 py-2">{{ row.premiumAmount ?? '—' }}</td>
-                                        </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                            </details>
-                        </template>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Pagination -->
-            <div v-if="uploads?.links?.length > 3"
-                 class="mt-6 flex flex-col items-center justify-between gap-4 rounded-xl border bg-white px-4 py-3 shadow sm:flex-row"
-            >
-                <div class="text-sm text-slate-600">
-                    Showing {{ uploads.from }} to {{ uploads.to }} of {{ uploads.total }} results
-                    <span class="ml-2 text-xs text-slate-500">
-                        ({{ currentPerPage }} per page)
-                    </span>
-                </div>
-                <div class="flex items-center gap-4">
-                    <div class="text-sm text-slate-600">
-                        Page {{ uploads.current_page }} of {{ uploads.last_page }}
-                    </div>
-                    <div class="flex gap-2">
-                        <Link
-                            v-if="uploads.prev_page_url"
-                            :href="uploads.prev_page_url"
-                            class="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                            Previous
-                        </Link>
-                        <Link
-                            v-for="page in uploads.links.slice(1, -1)"
-                            :key="page.label"
-                            :href="page.url"
-                            class="rounded-lg border px-3 py-1 text-sm"
-                            :class="page.active ? 'bg-blue-600 text-white border-blue-600' : 'text-slate-700 hover:bg-slate-50'"
-                        >
-                            <span v-html="page.label" />
-                        </Link>
-                        <Link
-                            v-if="uploads.next_page_url"
-                            :href="uploads.next_page_url"
-                            class="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-                        >
-                            Next
-                        </Link>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Preview Modal (Single File) -->
-            <div v-if="preview.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm p-4">
-                <div class="max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-xl bg-white shadow-2xl">
-                    <div class="flex items-center justify-between border-b bg-slate-50 px-6 py-4">
-                        <h3 class="text-lg font-semibold text-slate-900">{{ preview.title }}</h3>
-                        <button
-                            class="rounded-lg p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
-                            @click="closePreview"
-                        >
-                            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="max-h-[calc(90vh-140px)] overflow-auto p-6">
-                        <div v-if="preview.loading" class="flex items-center justify-center p-8">
-                            <div class="text-center">
-                                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                                <p class="text-slate-600">Loading preview...</p>
-                            </div>
-                        </div>
-
-                        <!-- Email Preview -->
-                        <div v-else-if="preview.type === 'email'">
-                            <div class="mb-4 rounded-lg border bg-white p-4 space-y-4">
-                                <div class="grid gap-3 text-sm sm:grid-cols-2">
-                                    <div><span class="font-semibold text-slate-700">From:</span> {{ preview.emailData?.from || '—' }}</div>
-                                    <div><span class="font-semibold text-slate-700">To:</span> {{ preview.emailData?.to || '—' }}</div>
-                                    <div><span class="font-semibold text-slate-700">Subject:</span> {{ preview.emailData?.subject || '—' }}</div>
-                                    <div><span class="font-semibold text-slate-700">Date:</span> {{ preview.emailData?.date || '—' }}</div>
-                                </div>
-
-                                <div class="rounded-lg border border-slate-200 p-3">
-                                    <div class="mb-2 text-xs font-semibold uppercase text-slate-500">Message</div>
-                                    <div
-                                        v-if="preview.emailData?.html_body"
-                                        class="email-html-preview rounded bg-white p-2"
-                                        v-html="sanitizeEmailHtml(preview.emailData.html_body)"
-                                    />
-                                    <pre v-else class="text-xs whitespace-pre-wrap bg-slate-50 p-3 rounded">{{ preview.emailData?.body || preview.content || 'No email content available.' }}</pre>
-                                </div>
-
-                                <div v-if="preview.emailData?.has_attachments && preview.emailData?.attachments?.length" class="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                                    <div class="mb-2 text-xs font-semibold uppercase text-amber-800">Attachments ({{ preview.emailData.attachments.length }})</div>
-                                    <div class="grid gap-2 sm:grid-cols-2">
-                                        <div v-for="(attachment, idx) in preview.emailData.attachments" :key="`preview-attachment-${idx}`" class="rounded border border-amber-200 bg-white p-2 text-xs">
-                                            <div class="font-medium text-slate-800 truncate">{{ attachment.name || `Attachment ${idx + 1}` }}</div>
-                                            <div class="text-slate-500">{{ attachment.type || 'application/octet-stream' }}</div>
-                                            <a
-                                                v-if="attachment.download_url"
-                                                :href="attachment.download_url"
-                                                class="mt-2 inline-flex rounded bg-blue-600 px-2 py-1 text-white hover:bg-blue-700"
-                                            >
-                                                Download
-                                            </a>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="flex flex-wrap gap-2">
-                                    <a
-                                        v-if="preview.downloadUrl"
-                                        :href="preview.downloadUrl"
-                                        class="rounded bg-slate-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
-                                    >
-                                        Download Email
+                            </td>
+                            <td class="px-4 py-2.5">
+                                <div class="text-xs text-gray-800 max-w-[220px] truncate">{{ u.company?.name }}</div>
+                                <div class="text-[10px] text-gray-400">{{ u.municipality?.name }}</div>
+                            </td>
+                            <td class="px-4 py-2.5 text-right tabular-nums font-medium text-gray-800">{{ u.caps_summary?.total ?? '\u2014' }}</td>
+                            <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_new ?? 0) > 0 ? 'font-semibold text-green-700' : 'text-gray-300'">{{ u.caps_summary?.caps_new ?? 0 }}</td>
+                            <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_updated ?? 0) > 0 ? 'font-semibold text-blue-700' : 'text-gray-300'">{{ u.caps_summary?.caps_updated ?? 0 }}</td>
+                            <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_cancelled ?? 0) > 0 ? 'font-semibold text-amber-700' : 'text-gray-300'">{{ u.caps_summary?.caps_cancelled ?? 0 }}</td>
+                            <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_errors ?? 0) > 0 ? 'font-semibold text-red-600' : 'text-gray-300'">{{ u.caps_summary?.caps_errors ?? 0 }}</td>
+                            <td class="px-4 py-2.5">
+                                <div class="flex items-center gap-1.5">
+                                    <button v-if="(u.all_previewable_files || []).length" @click.stop="openAllFilesPreview(u)"
+                                            class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                        Files
+                                    </button>
+                                    <a v-if="u.caps_payment_batch_id" :href="`/uploads/${u.id}/caps-batch-detail`"
+                                       class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                                        Review
                                     </a>
-                                    <a
-                                        v-if="preview.openOutlookHint && preview.downloadUrl"
-                                        :href="`ms-outlook:ofe|u|${preview.downloadUrl}`"
-                                        class="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
-                                    >
-                                        Open in Outlook
-                                    </a>
+                                    <button v-if="u.can_dispatch_to_caps" @click.stop="dispatchToCaps(u.id)"
+                                            class="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-[11px] font-medium text-white hover:bg-slate-900 transition">
+                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                                        Send
+                                    </button>
+                                    <button v-if="u.can_retry_caps" @click.stop="retryCapsDispatch(u.id)"
+                                            class="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 hover:bg-amber-100 transition">
+                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                        Retry
+                                    </button>
                                 </div>
-                            </div>
-                        </div>
-
-                        <!-- Spreadsheet Preview -->
-                        <div v-else-if="preview.isSpreadsheet">
-                            <div class="mb-4">
-                                <div class="flex items-center justify-between mb-4">
-                                    <h4 class="text-lg font-semibold text-slate-900">Spreadsheet Preview</h4>
-                                    <div class="text-sm text-slate-600">
-                                        {{ spreadsheetData.totalRows }} rows, {{ spreadsheetData.headers.length }} columns
-                                    </div>
-                                </div>
-
-                                <div v-if="spreadsheetData.error" class="rounded-lg border border-red-200 bg-red-50 p-4">
-                                    <p class="text-red-600">{{ spreadsheetData.error }}</p>
-                                </div>
-
-                                <div v-else-if="spreadsheetData.headers.length > 0 && spreadsheetData.totalRows > 0">
-                                    <!-- Spreadsheet Pagination -->
-                                    <div class="mb-4 flex items-center justify-between">
-                                        <div class="text-sm text-slate-600">
-                                            Page {{ spreadsheetData.currentPage }} of {{ totalSpreadsheetPages }}
-                                            (Rows {{ Math.min((spreadsheetData.currentPage - 1) * spreadsheetData.itemsPerPage + 1, spreadsheetData.totalRows) }}
-                                            to {{ Math.min(spreadsheetData.currentPage * spreadsheetData.itemsPerPage, spreadsheetData.totalRows) }})
-                                        </div>
-                                        <div class="flex gap-2">
-                                            <button
-                                                @click="changeSpreadsheetPage(spreadsheetData.currentPage - 1)"
-                                                :disabled="spreadsheetData.currentPage <= 1"
-                                                class="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                Previous
-                                            </button>
-                                            <button
-                                                @click="changeSpreadsheetPage(spreadsheetData.currentPage + 1)"
-                                                :disabled="spreadsheetData.currentPage >= totalSpreadsheetPages"
-                                                class="rounded-lg border px-3 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                Next
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <!-- Spreadsheet Table -->
-                                    <div class="overflow-auto rounded-lg border">
-                                        <table class="min-w-full divide-y divide-slate-200">
-                                            <thead class="bg-slate-50">
-                                            <tr>
-                                                <th
-                                                    v-for="(header, index) in spreadsheetData.headers"
-                                                    :key="index"
-                                                    class="px-4 py-2 text-left text-xs font-medium text-slate-700 uppercase tracking-wider border-r border-slate-200 whitespace-nowrap"
-                                                >
-                                                    {{ header || `Column ${index + 1}` }}
-                                                </th>
-                                            </tr>
-                                            </thead>
-                                            <tbody class="bg-white divide-y divide-slate-200">
-                                            <tr
-                                                v-for="(row, rowIndex) in getCurrentSpreadsheetPage"
-                                                :key="rowIndex"
-                                                :class="rowIndex % 2 === 0 ? 'bg-white' : 'bg-slate-50'"
-                                            >
-                                                <td
-                                                    v-for="(cell, cellIndex) in row"
-                                                    :key="cellIndex"
-                                                    class="px-4 py-2 text-sm text-slate-700 border-r border-slate-200 max-w-xs truncate"
-                                                    :title="cell"
-                                                >
-                                                    {{ cell }}
-                                                </td>
-                                                <!-- Fill empty cells -->
-                                                <td
-                                                    v-for="n in spreadsheetData.headers.length - row.length"
-                                                    :key="`empty-${n}`"
-                                                    class="px-4 py-2 text-sm text-slate-400 border-r border-slate-200"
-                                                >
-                                                    —
-                                                </td>
-                                            </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <div class="mt-4 text-xs text-slate-500">
-                                        Note: Showing first 500 rows. Download full file for complete data.
-                                    </div>
-                                </div>
-
-                                <!-- Empty State -->
-                                <div v-else-if="spreadsheetData.headers.length === 0 && !preview.loading"
-                                     class="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center"
-                                >
-                                    <p class="text-slate-500">No data found in spreadsheet</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Text Preview -->
-                        <div v-else-if="preview.type === 'text'">
-                            <pre class="rounded-lg bg-slate-50 p-4 text-xs whitespace-pre-wrap font-mono">{{ preview.content }}</pre>
-                        </div>
-
-                        <!-- PDF Preview -->
-                        <div v-else-if="preview.type === 'pdf'">
-                            <embed
-                                :src="preview.url"
-                                type="application/pdf"
-                                class="h-96 w-full rounded-lg border"
-                            />
-                        </div>
-
-                        <!-- Image Preview -->
-                        <div v-else-if="preview.type === 'image'">
-                            <img
-                                :src="preview.url"
-                                :alt="preview.title"
-                                class="mx-auto max-h-[70vh] max-w-full rounded-lg border"
-                            />
-                        </div>
-
-                        <!-- Other File Types -->
-                        <div v-else class="py-8 text-center">
-                            <p class="mb-4 text-slate-500">
-                                Preview not available for this file type
-                            </p>
-                            <a
-                                :href="preview.url"
-                                download
-                                class="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-                            >
-                                Download File
-                            </a>
-                        </div>
-                    </div>
-                    <div class="flex justify-end gap-2 border-t bg-slate-50 px-6 py-4">
-                        <a
-                            :href="preview.url"
-                            download
-                            class="rounded-lg bg-slate-600 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-                        >
-                            Download
-                        </a>
-                        <button
-                            class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                            @click="closePreview"
-                        >
-                            Close
-                        </button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                </div>
+                <div v-if="uploads?.last_page > 1" class="flex items-center justify-between border-t border-slate-200 px-4 py-3 bg-slate-50">
+                    <span class="text-xs text-slate-500">{{ uploads.from }}&ndash;{{ uploads.to }} of {{ uploads.total }}</span>
+                    <div class="flex gap-1">
+                        <button v-for="link in uploads.links" :key="link.label" @click="link.url && router.get(link.url, {}, { preserveState: true })" :disabled="!link.url" class="rounded-lg px-3 py-1 text-xs transition" :class="link.active ? 'bg-slate-800 text-white' : link.url ? 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200' : 'text-slate-300'" v-html="link.label"></button>
                     </div>
                 </div>
             </div>

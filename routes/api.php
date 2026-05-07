@@ -32,7 +32,7 @@ Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
     Route::apiResource('companies', CompanyController::class)->only(['index', 'show']);
     Route::apiResource('municipalities', MunicipalityController::class)->only(['index', 'show']);
     Route::apiResource('deadlines', DeadlineController::class)->only(['index', 'show']);
-    Route::apiResource('uploads', UploadController::class)->only(['index', 'show'])->names('api.uploads');
+    Route::apiResource('uploads', UploadController::class)->only(['index', 'show']);
     Route::get('uploads/premium-batch', [UploadController::class, 'premiumBatchDetailedInfo']);
 
     // Tenant + platform management APIs (internal authenticated users).

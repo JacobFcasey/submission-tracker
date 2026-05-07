@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { ref, nextTick, onMounted } from 'vue';
+import { ref, nextTick, onMounted, onUnmounted } from 'vue';
 import { useForm, Link, router, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({
@@ -30,7 +30,20 @@ const scrollToBottom = () => {
     nextTick(() => messagesEnd.value?.scrollIntoView({ behavior: 'smooth' }));
 };
 
-onMounted(scrollToBottom);
+onMounted(() => {
+    scrollToBottom();
+    startPolling();
+});
+
+// Poll for new messages every 5 seconds
+let pollTimer = null;
+const startPolling = () => {
+    pollTimer = setInterval(() => {
+        router.reload({ only: ['messages', 'ticket'], preserveScroll: true });
+        nextTick(scrollToBottom);
+    }, 5000);
+};
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); });
 
 const sendReply = () => {
     replyForm.post(`/support/${props.ticket.id}/reply`, {
@@ -124,44 +137,47 @@ const isMine = (msg) => msg.user_id === props.currentUserId;
                     </div>
 
                     <!-- Messages -->
-                    <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                        <div class="max-h-[60vh] space-y-0 overflow-y-auto p-5" style="scroll-behavior: smooth;">
-                            <div v-for="msg in messages" :key="msg.id"
-                                 :class="[
-                                     'relative mb-4 rounded-xl px-4 py-3',
-                                     msg.is_internal
-                                         ? 'ml-8 border-2 border-dashed border-yellow-200 bg-yellow-50'
-                                         : isMine(msg)
-                                             ? 'ml-12 bg-gradient-to-br from-indigo-50 to-violet-50 ring-1 ring-indigo-100'
-                                             : 'mr-12 bg-gray-50 ring-1 ring-gray-100'
-                                 ]">
-                                <!-- Internal note badge -->
-                                <div v-if="msg.is_internal"
-                                     class="absolute -top-2 left-3 rounded-full bg-yellow-400 px-2 py-0.5 text-[9px] font-bold text-yellow-900">
-                                    INTERNAL NOTE
-                                </div>
-
-                                <!-- Sender -->
-                                <div class="mb-2 flex items-center gap-2">
-                                    <div class="flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                                         :class="isMine(msg) ? 'bg-indigo-500' : 'bg-emerald-500'">
-                                        {{ getInitials(msg.user?.name) }}
+                    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        <div class="max-h-[65vh] overflow-y-auto bg-slate-50 p-5" style="scroll-behavior: smooth;">
+                            <div v-for="msg in messages" :key="msg.id" class="mb-4"
+                                 :class="isMine(msg) ? 'flex justify-end' : 'flex justify-start'">
+                                <div :class="[
+                                    'relative max-w-[75%] rounded-2xl px-4 py-3',
+                                    msg.is_internal
+                                        ? 'border-2 border-dashed border-yellow-300 bg-yellow-50'
+                                        : isMine(msg)
+                                            ? 'bg-slate-800 text-white rounded-br-sm'
+                                            : 'bg-white border border-slate-200 rounded-bl-sm shadow-sm'
+                                ]">
+                                    <!-- Internal note badge -->
+                                    <div v-if="msg.is_internal"
+                                         class="absolute -top-2.5 left-3 rounded-full bg-yellow-400 px-2 py-0.5 text-[9px] font-bold text-yellow-900 shadow-sm">
+                                        INTERNAL NOTE
                                     </div>
-                                    <span class="text-xs font-semibold text-gray-700">{{ msg.user?.name || 'Unknown' }}</span>
-                                    <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
-                                </div>
 
-                                <!-- Body -->
-                                <div class="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed">{{ msg.body }}</div>
+                                    <!-- Sender -->
+                                    <div class="mb-1.5 flex items-center gap-2">
+                                        <div class="flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-bold"
+                                             :class="isMine(msg) ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-600'">
+                                            {{ getInitials(msg.user?.name) }}
+                                        </div>
+                                        <span class="text-[11px] font-semibold" :class="isMine(msg) ? 'text-slate-300' : 'text-slate-700'">{{ msg.user?.name || 'Unknown' }}</span>
+                                        <span class="text-[10px]" :class="isMine(msg) ? 'text-slate-400' : 'text-slate-400'">{{ formatTime(msg.created_at) }}</span>
+                                    </div>
 
-                                <!-- Attachments -->
-                                <div v-if="msg.attachments?.length" class="mt-3 space-y-1">
-                                    <a v-for="(att, idx) in msg.attachments" :key="idx"
-                                       :href="`/support/${ticket.id}/messages/${msg.id}/attachments/${idx}`"
-                                       class="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 ring-1 ring-indigo-100 hover:bg-indigo-50">
-                                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32"/></svg>
-                                        {{ att.name }}
-                                    </a>
+                                    <!-- Body -->
+                                    <div class="whitespace-pre-wrap text-sm leading-relaxed" :class="isMine(msg) ? 'text-slate-100' : 'text-slate-700'">{{ msg.body }}</div>
+
+                                    <!-- Attachments -->
+                                    <div v-if="msg.attachments?.length" class="mt-2.5 flex flex-wrap gap-1.5">
+                                        <a v-for="(att, idx) in msg.attachments" :key="idx"
+                                           :href="`/support/${ticket.id}/messages/${msg.id}/attachments/${idx}`"
+                                           class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium transition"
+                                           :class="isMine(msg) ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'">
+                                            <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32"/></svg>
+                                            {{ att.name }}
+                                        </a>
+                                    </div>
                                 </div>
                             </div>
                             <div ref="messagesEnd"></div>
@@ -183,10 +199,11 @@ const isMine = (msg) => msg.user_id === props.currentUserId;
 
                                 <div class="flex gap-2">
                                     <div class="flex-1">
-                                        <textarea v-model="replyForm.body" rows="3" required
-                                                  :placeholder="replyForm.is_internal ? 'Add an internal note...' : 'Type your reply...'"
-                                                  class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
-                                                  :class="replyForm.is_internal ? 'bg-yellow-50 border-yellow-200' : ''" />
+                                        <textarea v-model="replyForm.body" rows="2" required
+                                                  :placeholder="replyForm.is_internal ? 'Add an internal note...' : 'Type your message...'"
+                                                  class="w-full resize-none rounded-xl border px-4 py-3 text-sm focus:ring-2 transition"
+                                                  :class="replyForm.is_internal ? 'bg-yellow-50 border-yellow-200 focus:border-yellow-400 focus:ring-yellow-100' : 'border-slate-200 focus:border-slate-400 focus:ring-slate-100'"
+                                                  @keydown.enter.exact.prevent="replyForm.body.trim() && sendReply()" />
 
                                         <!-- Attachments preview -->
                                         <div v-if="replyForm.attachments.length" class="mt-1 flex flex-wrap gap-1">
@@ -205,8 +222,8 @@ const isMine = (msg) => msg.user_id === props.currentUserId;
                                             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32"/></svg>
                                         </button>
                                         <button type="submit" :disabled="replyForm.processing || !replyForm.body.trim()"
-                                                class="rounded-lg p-2 text-white shadow-sm disabled:opacity-40"
-                                                :class="replyForm.is_internal ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-indigo-500 hover:bg-indigo-600'">
+                                                class="rounded-xl p-2.5 text-white shadow-sm disabled:opacity-40 transition"
+                                                :class="replyForm.is_internal ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-slate-800 hover:bg-slate-900'">
                                             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
                                         </button>
                                     </div>
@@ -292,7 +309,7 @@ const isMine = (msg) => msg.user_id === props.currentUserId;
                                     </select>
                                 </div>
                                 <button @click="updateStatus" :disabled="statusForm.processing"
-                                        class="w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-50">
+                                        class="w-full rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900 disabled:opacity-50 transition">
                                     Update Ticket
                                 </button>
                             </div>

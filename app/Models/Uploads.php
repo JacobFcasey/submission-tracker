@@ -13,6 +13,25 @@ class Uploads extends Model
     use RecordsAuditTrail;
     use BelongsToTenant;
 
+    /**
+     * CAPS dispatch workflow states. Aligns with CAPS processing stages.
+     */
+    public const DISPATCH_DRAFT          = 'draft';
+    public const DISPATCH_VALIDATING     = 'validating';
+    public const DISPATCH_DISPATCHED     = 'dispatched';
+    public const DISPATCH_CAPS_PROCESSING = 'caps_processing';
+    public const DISPATCH_COMPLETED      = 'completed';
+    public const DISPATCH_FAILED         = 'failed';
+
+    public const DISPATCH_STATUSES = [
+        self::DISPATCH_DRAFT,
+        self::DISPATCH_VALIDATING,
+        self::DISPATCH_DISPATCHED,
+        self::DISPATCH_CAPS_PROCESSING,
+        self::DISPATCH_COMPLETED,
+        self::DISPATCH_FAILED,
+    ];
+
     // Fillable fields
     protected $fillable = [
         'tenant_id',
@@ -39,6 +58,14 @@ class Uploads extends Model
         'caps_last_webhook_at',
         'caps_verification',
         'caps_verified_at',
+        'caps_dispatch_status',
+        'caps_batch_type',
+        'caps_dispatched_at',
+        'caps_errors',
+        'caps_summary',
+        'caps_retry_count',
+        'caps_last_retry_at',
+        'caps_downloadable_outputs',
     ];
 
     // Update the casts array:
@@ -52,6 +79,11 @@ class Uploads extends Model
         'caps_last_webhook_at' => 'datetime',
         'caps_verification' => 'array',
         'caps_verified_at' => 'datetime',
+        'caps_dispatched_at' => 'datetime',
+        'caps_errors' => 'array',
+        'caps_summary' => 'array',
+        'caps_last_retry_at' => 'datetime',
+        'caps_downloadable_outputs' => 'array',
     ];
 
     /**
@@ -264,9 +296,65 @@ class Uploads extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    public function capsWebhookEvents()
+    {
+        return $this->hasMany(CapsWebhookEvent::class, 'upload_id');
+    }
+
     public function isComplete(): bool
     {
         return $this->status === 'Completed';
+    }
+
+    /**
+     * Can this upload be dispatched to CAPS?
+     */
+    public function canDispatchToCaps(): bool
+    {
+        return $this->hasAllRequiredFiles()
+            && in_array($this->caps_dispatch_status, [self::DISPATCH_DRAFT, self::DISPATCH_FAILED], true);
+    }
+
+    /**
+     * Can this upload be retried (re-dispatched) to CAPS?
+     */
+    public function canRetryDispatch(): bool
+    {
+        return $this->caps_dispatch_status === self::DISPATCH_FAILED;
+    }
+
+    /**
+     * Is this upload currently being processed by CAPS?
+     */
+    public function isCapsPending(): bool
+    {
+        return in_array($this->caps_dispatch_status, [
+            self::DISPATCH_DISPATCHED,
+            self::DISPATCH_CAPS_PROCESSING,
+        ], true);
+    }
+
+    /**
+     * Scope: uploads that are ready for CAPS dispatch.
+     */
+    public function scopeReadyForDispatch($query)
+    {
+        return $query->where('caps_dispatch_status', self::DISPATCH_DRAFT)
+            ->whereNotNull('original_file_path')
+            ->whereNotNull('workings_file_path')
+            ->whereNotNull('systems_import_file_path');
+    }
+
+    /**
+     * Scope: uploads that have been dispatched but not yet completed.
+     */
+    public function scopePendingCapsResult($query)
+    {
+        return $query->whereIn('caps_dispatch_status', [
+            self::DISPATCH_DISPATCHED,
+            self::DISPATCH_CAPS_PROCESSING,
+        ]);
     }
 
     public function getMissingFiles(): array

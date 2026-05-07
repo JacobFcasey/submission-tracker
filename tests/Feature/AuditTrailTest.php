@@ -116,6 +116,10 @@ class AuditTrailTest extends TestCase
         $user = User::factory()->create();
         $user->givePermissionTo($permission);
 
+        // Reload user to pick up the newly assigned permission
+        $user = $user->fresh();
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
         $audit = Audit::create([
             'user_type' => User::class,
             'user_id' => $user->id,
@@ -130,7 +134,7 @@ class AuditTrailTest extends TestCase
             'tags' => 'logged_in,login.store,post',
         ]);
 
-        $response = $this->actingAs($user)->get("/admin/audits/{$audit->id}");
+        $response = $this->actingAs($user, 'web')->get("/admin/audits/{$audit->id}");
 
         $response->assertOk();
         $response->assertSee('Admin\/Audits\/Show');

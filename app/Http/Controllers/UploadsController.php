@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\UploadsExports;
 use App\Services\CaseyPremiumBatchService;
+use App\Services\CapsSubmissionService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Reader\Exception as SpreadsheetException;
 use PhpMimeMailParser\Parser as MimeMailParser;
@@ -225,6 +226,13 @@ class UploadsController extends Controller
                 'missing_files' => $u->getMissingFilesList(),
                 'next_required_file' => $u->getNextRequiredFile(),
                 'can_be_completed' => in_array($u->status, ['Pending', 'Processing']) && !$u->hasAllRequiredFiles(),
+                'caps_dispatch_status' => $u->caps_dispatch_status ?? 'draft',
+                'caps_payment_batch_id' => $u->caps_payment_batch_id,
+                'caps_status' => $u->caps_status,
+                'caps_batch_type' => $u->caps_batch_type,
+                'caps_retry_count' => $u->caps_retry_count ?? 0,
+                'can_dispatch_to_caps' => $u->canDispatchToCaps(),
+                'can_retry_caps' => $u->canRetryDispatch(),
             ];
         });
 
@@ -448,12 +456,63 @@ class UploadsController extends Controller
 
             $this->sendUploadNotifications($user, [$upload], $municipality, collect([$company]), $status);
 
-            // Auto-run CAPS verification immediately after upload
-            $this->runAutoVerification($upload, $company);
+            // Auto-dispatch to CAPS if systems import file exists
+            $hasSystemsImport = !empty($filesData['systems_import_file_path']);
+            if ($hasSystemsImport) {
+                // Company name guard — check file content matches the selected company
+                try {
+                    $svc = app(CapsSubmissionService::class);
+                    $mismatch = $svc->getCompanyMismatch($upload);
+                    if ($mismatch) {
+                        // Keep the upload but don't dispatch — show error
+                        return redirect()
+                            ->route('uploads.history')
+                            ->with('error', $mismatch);
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning('Company name check failed: ' . $e->getMessage());
+                }
+
+                try {
+                    set_time_limit(120);
+                    $capsResult = app(CapsSubmissionService::class)->previewOnCaps($upload);
+                    $capsOk = $capsResult['ok'] ?? false;
+                } catch (\Throwable $e) {
+                    Log::warning('CAPS auto-dispatch failed: ' . $e->getMessage());
+                    $capsOk = false;
+                }
+
+                if ($capsOk) {
+                    $summary = $capsResult['summary'] ?? [];
+                    $capsNew = $summary['caps_new'] ?? 0;
+                    $capsErr = $summary['caps_errors'] ?? 0;
+                    $total = $summary['total'] ?? 0;
+
+                    // Notify user about CAPS result
+                    try {
+                        $user->notifications()->create([
+                            'type' => 'caps_dispatch',
+                            'data' => json_encode([
+                                'title' => 'CAPS batch created',
+                                'message' => "{$company->name}: {$total} records processed — {$capsNew} new, {$capsErr} errors.",
+                                'upload_id' => $upload->id,
+                                'batch_id' => $summary['caps_batch_id'] ?? null,
+                                'url' => route('uploads.caps-batch-detail', $upload->id),
+                            ]),
+                        ]);
+                    } catch (\Throwable $e) {
+                        Log::warning('CAPS notification failed: ' . $e->getMessage());
+                    }
+
+                    return redirect()
+                        ->route('uploads.caps-batch-detail', $upload->id)
+                        ->with('success', "Sent to CAPS: {$total} records — {$capsNew} new, {$capsErr} errors. Review below and press Save Premiums.");
+                }
+            }
 
             return redirect()
-                ->route('uploads.index')
-                ->with('success', 'Upload submitted successfully for ' . $company->name . ' with status: ' . $status);
+                ->route('uploads.history')
+                ->with('success', 'File uploaded for ' . $company->name . '.');
 
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -2399,12 +2458,14 @@ class UploadsController extends Controller
         $query = Uploads::query()
             ->where('user_id', $user->id)
             ->with(['company:id,name', 'municipality:id,name', 'user:id,name,email'])
-            ->when($request->status, fn ($q, $s) => $q->where('status', $s))
+            ->when($request->status, fn ($q, $s) => $q->where('caps_dispatch_status', $s))
             ->when($request->search, function ($q, $s) {
-                $q->where('reference', 'like', "%$s%")
-                    ->orWhereHas('company', fn ($c) => $c->where('name', 'like', "%$s%"))
-                    ->orWhereHas('municipality', fn ($m) => $m->where('name', 'like', "%$s%"))
-                    ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%$s%"));
+                $q->where(function ($sub) use ($s) {
+                    $sub->where('reference', 'like', "%$s%")
+                        ->orWhereHas('company', fn ($c) => $c->where('name', 'like', "%$s%"))
+                        ->orWhereHas('municipality', fn ($m) => $m->where('name', 'like', "%$s%"))
+                        ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%$s%"));
+                });
             })
             ->latest('submitted_at');
 
@@ -2478,6 +2539,17 @@ class UploadsController extends Controller
                 'caps_verification' => $u->caps_verification,
                 'caps_verified_at' => $u->caps_verified_at?->format('Y-m-d H:i:s'),
                 'caps_verified_at_human' => $u->caps_verified_at?->diffForHumans(),
+                // CAPS dispatch fields
+                'caps_dispatch_status' => $u->caps_dispatch_status ?? 'draft',
+                'caps_payment_batch_id' => $u->caps_payment_batch_id,
+                'caps_batch_type' => $u->caps_batch_type,
+                'caps_status' => $u->caps_status,
+                'caps_summary' => $u->caps_summary,
+                'caps_errors' => $u->caps_errors,
+                'caps_dispatched_at' => $u->caps_dispatched_at?->format('Y-m-d H:i:s'),
+                'caps_retry_count' => $u->caps_retry_count ?? 0,
+                'can_dispatch_to_caps' => $u->canDispatchToCaps(),
+                'can_retry_caps' => $u->canRetryDispatch(),
             ];
         });
 
@@ -2489,13 +2561,24 @@ class UploadsController extends Controller
             $policyBatchId = 5239;
         }
 
+        // Summary counts for the header
+        $needsReview = Uploads::where('user_id', $user->id)->where('caps_dispatch_status', 'caps_processing')->count();
+        $saved = Uploads::where('user_id', $user->id)->where('caps_dispatch_status', 'completed')->count();
+        $failed = Uploads::where('user_id', $user->id)->where('caps_dispatch_status', 'failed')->count();
+        $totalUploads = Uploads::where('user_id', $user->id)->count();
+
         return Inertia::render('Uploads/History', [
             'filters' => $request->only(['status', 'search']),
             'uploads' => $uploads,
             'statusOptions' => ['Pending', 'Processing', 'Completed', 'Rejected'],
             'perPageOptions' => [20, 50, 100, 200, 500],
             'currentPerPage' => (int)$perPage,
-            'premiumBatchData' => $caseyService->fetchDetailedInfo($policyBatchId),
+            'counts' => [
+                'total' => $totalUploads,
+                'needs_review' => $needsReview,
+                'saved' => $saved,
+                'failed' => $failed,
+            ],
         ]);
     }
 
@@ -2712,7 +2795,7 @@ class UploadsController extends Controller
      * Stores results on the upload record so History.vue can display them
      * without requiring a manual "Verify" click.
      */
-    private function runAutoVerification(Uploads $upload, Company $company): void
+    public function runAutoVerification(Uploads $upload, Company $company): void
     {
         try {
             if (!$company->casey_id) {
@@ -2868,6 +2951,195 @@ class UploadsController extends Controller
             'company_name' => $company->name,
             'casey_id' => $company->casey_id,
             'results' => $results,
+        ]);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  CAPS DISPATCH WORKFLOW
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Dispatch a completed upload to CAPS for processing.
+     *
+     * POST /uploads/{upload}/dispatch-to-caps
+     */
+    /**
+     * Dispatch to CAPS: Preview → Import (validates headers, stages records).
+     */
+    public function dispatchToCaps(Uploads $upload)
+    {
+        $this->authorize('create upload');
+
+        $user = auth()->user();
+        if ($upload->user_id !== $user->id && !$user->hasRole(['admin', 'super-admin', 'superadmin'])) {
+            abort(403);
+        }
+
+        $result = app(CapsSubmissionService::class)->previewOnCaps($upload);
+
+        if ($result['ok']) {
+            $s = $result['summary'] ?? [];
+            $phase = $s['phase'] ?? 'unknown';
+            $batchId = $s['caps_batch_id'] ?? $result['batch_id'] ?? null;
+            $msg = $phase === 'imported'
+                ? "CAPS imported {$s['total']} records into batch #{$batchId}. Review and confirm to save."
+                : "CAPS preview: {$s['total']} records. " . (($s['can_submit'] ?? false) ? 'Ready to import.' : 'Fix header issues first.');
+            return back()->with('success', $msg);
+        }
+
+        return back()->withErrors(['error' => $result['message'] ?? 'CAPS dispatch failed.']);
+    }
+
+    /**
+     * Save/finalize an imported CAPS batch (Phase 4).
+     */
+    public function saveToCaps(Uploads $upload)
+    {
+        $this->authorize('create upload');
+
+        $user = auth()->user();
+        if ($upload->user_id !== $user->id && !$user->hasRole(['admin', 'super-admin', 'superadmin'])) {
+            abort(403);
+        }
+
+        if (!$upload->caps_payment_batch_id) {
+            return back()->withErrors(['error' => 'No CAPS batch to save. Dispatch first.']);
+        }
+
+        $result = app(CapsSubmissionService::class)->save($upload);
+
+        if ($result['ok']) {
+            try {
+                $user->notifications()->create([
+                    'type' => 'caps_saved',
+                    'data' => json_encode([
+                        'title' => 'Premiums saved to CAPS',
+                        'message' => ($upload->company?->name ?? 'Upload') . ': Batch #' . $upload->caps_payment_batch_id . ' finalized.',
+                        'upload_id' => $upload->id,
+                        'batch_id' => $upload->caps_payment_batch_id,
+                        'url' => route('uploads.caps-batch-detail', $upload->id),
+                    ]),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('CAPS save notification failed: ' . $e->getMessage());
+            }
+
+            return back()->with('success', 'Batch #' . $upload->caps_payment_batch_id . ' saved to CAPS.');
+        }
+
+        return back()->withErrors(['error' => $result['message'] ?? 'CAPS save failed.']);
+    }
+
+    /**
+     * Retry a failed CAPS dispatch.
+     *
+     * POST /uploads/{upload}/retry-caps
+     */
+    public function retryCapsDispatch(Uploads $upload)
+    {
+        $this->authorize('create upload');
+
+        $user = auth()->user();
+
+        if ($upload->user_id !== $user->id && !$user->hasRole(['admin', 'super-admin', 'superadmin'])) {
+            abort(403);
+        }
+
+        if (!$upload->canRetryDispatch()) {
+            return back()->withErrors([
+                'error' => 'This upload cannot be retried. Current CAPS status: ' . $upload->caps_dispatch_status,
+            ]);
+        }
+
+        $service = app(CapsSubmissionService::class);
+        $result = $service->retry($upload);
+
+        if ($result['ok']) {
+            return back()->with('success', 'Retry dispatched to CAPS. Batch ID: ' . ($result['batch_id'] ?? 'pending'));
+        }
+
+        return back()->withErrors([
+            'error' => $result['message'] ?? 'CAPS retry failed.',
+        ]);
+    }
+
+    /**
+     * Poll CAPS for the status of a dispatched batch (AJAX).
+     *
+     * POST /uploads/{upload}/poll-caps-status
+     */
+    public function pollCapsStatus(Uploads $upload)
+    {
+        $this->authorize('view uploads');
+
+        if (!$upload->caps_payment_batch_id) {
+            return response()->json(['ok' => false, 'message' => 'No CAPS batch ID linked.'], 422);
+        }
+
+        $service = app(CapsSubmissionService::class);
+        $result = $service->pollStatus($upload);
+
+        return response()->json(array_merge($result, [
+            'upload_id' => $upload->id,
+            'caps_dispatch_status' => $upload->fresh()->caps_dispatch_status,
+            'caps_status' => $upload->fresh()->caps_status,
+            'caps_summary' => $upload->fresh()->caps_summary,
+            'caps_errors' => $upload->fresh()->caps_errors,
+        ]));
+    }
+
+    /**
+     * Show detailed CAPS batch information for an upload.
+     *
+     * GET /uploads/{upload}/caps-batch-detail
+     */
+    public function capsBatchDetail(Uploads $upload)
+    {
+        $this->authorize('view uploads');
+
+        $user = auth()->user();
+        if ($upload->user_id !== $user->id && !$user->hasRole(['admin', 'super-admin', 'superadmin'])) {
+            abort(403);
+        }
+
+        $webhookEvents = $upload->capsWebhookEvents()
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get()
+            ->map(fn ($e) => [
+                'id' => $e->id,
+                'event_type' => $e->event_type,
+                'status' => $e->status,
+                'payments_batch_id' => $e->payments_batch_id,
+                'created_at' => $e->created_at?->format('Y-m-d H:i:s'),
+            ]);
+
+        return Inertia::render('Uploads/CapsBatchDetail', [
+            'upload' => [
+                'id' => $upload->id,
+                'reference' => $upload->reference,
+                'status' => $upload->status,
+                'company' => $upload->company ? ['id' => $upload->company->id, 'name' => $upload->company->name] : null,
+                'municipality' => $upload->municipality ? ['id' => $upload->municipality->id, 'name' => $upload->municipality->name] : null,
+                'caps_payment_batch_id' => $upload->caps_payment_batch_id,
+                'caps_dispatch_status' => $upload->caps_dispatch_status,
+                'caps_batch_type' => $upload->caps_batch_type,
+                'caps_status' => $upload->caps_status,
+                'caps_status_detail' => $upload->caps_status_detail,
+                'caps_dispatched_at' => $upload->caps_dispatched_at?->format('Y-m-d H:i:s'),
+                'caps_errors' => $upload->caps_errors,
+                'caps_summary' => $upload->caps_summary,
+                'caps_retry_count' => $upload->caps_retry_count,
+                'caps_last_retry_at' => $upload->caps_last_retry_at?->format('Y-m-d H:i:s'),
+                'caps_last_webhook_at' => $upload->caps_last_webhook_at?->format('Y-m-d H:i:s'),
+                'caps_downloadable_outputs' => $upload->caps_downloadable_outputs,
+                'caps_verification' => $upload->caps_verification,
+                'caps_verified_at' => $upload->caps_verified_at?->format('Y-m-d H:i:s'),
+                'can_dispatch' => $upload->canDispatchToCaps(),
+                'can_retry' => $upload->canRetryDispatch(),
+                'is_pending' => $upload->isCapsPending(),
+            ],
+            'webhookEvents' => $webhookEvents,
         ]);
     }
 }

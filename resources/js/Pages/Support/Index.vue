@@ -86,7 +86,7 @@ const formatTime = (ts) => {
                     <p class="mt-1 text-sm text-gray-500">{{ isStaff ? 'Manage all support cases' : 'Your support cases and queries' }}</p>
                 </div>
                 <Link href="/support/create"
-                      class="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:from-indigo-600 hover:to-violet-700 hover:shadow-lg">
+                      class="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                     New Ticket
                 </Link>

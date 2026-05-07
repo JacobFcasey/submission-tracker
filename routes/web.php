@@ -13,6 +13,8 @@ use App\Http\Controllers\MunicipalityController;
 use App\Http\Controllers\MunicipalityDeadlineController;
 use App\Http\Controllers\SubmissionController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\WorkAllocationController;
+use App\Http\Controllers\AffordabilityController;
 use App\Http\Controllers\SupportTicketController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\CaseySsoController;
@@ -108,6 +110,14 @@ Route::middleware('auth')->group(function () {
         ->name('uploads.history')
         ->middleware('permission:view uploads');
 
+    Route::get('/uploads/affordability', [AffordabilityController::class, 'index'])
+        ->name('uploads.affordability')
+        ->middleware('permission:view uploads');
+
+    Route::post('/uploads/affordability/search', [AffordabilityController::class, 'search'])
+        ->name('uploads.affordability.search')
+        ->middleware('permission:view uploads');
+
     Route::get('/uploads/export', [UploadsController::class, 'export'])
         ->name('uploads.export')
         ->middleware('permission:export uploads');
@@ -163,6 +173,27 @@ Route::middleware('auth')->group(function () {
     // CAPS member/policy comparison
     Route::post('/uploads/{upload}/compare-caps', [UploadsController::class, 'compareWithCaps'])
         ->name('uploads.compare-caps')
+        ->middleware('permission:view uploads');
+
+    // CAPS dispatch workflow
+    Route::post('/uploads/{upload}/dispatch-to-caps', [UploadsController::class, 'dispatchToCaps'])
+        ->name('uploads.dispatch-caps')
+        ->middleware('permission:create upload');
+
+    Route::post('/uploads/{upload}/retry-caps', [UploadsController::class, 'retryCapsDispatch'])
+        ->name('uploads.retry-caps')
+        ->middleware('permission:create upload');
+
+    Route::post('/uploads/{upload}/save-to-caps', [UploadsController::class, 'saveToCaps'])
+        ->name('uploads.save-caps')
+        ->middleware('permission:create upload');
+
+    Route::post('/uploads/{upload}/poll-caps-status', [UploadsController::class, 'pollCapsStatus'])
+        ->name('uploads.poll-caps-status')
+        ->middleware('permission:view uploads');
+
+    Route::get('/uploads/{upload}/caps-batch-detail', [UploadsController::class, 'capsBatchDetail'])
+        ->name('uploads.caps-batch-detail')
         ->middleware('permission:view uploads');
 
     // =====================================================================
@@ -265,6 +296,13 @@ Route::middleware('auth')->group(function () {
     Route::post('/support/{ticket}/reply', [SupportTicketController::class, 'reply'])->name('support.reply');
     Route::put('/support/{ticket}/status', [SupportTicketController::class, 'updateStatus'])->name('support.update-status');
     Route::get('/support/{ticket}/messages/{message}/attachments/{index}', [SupportTicketController::class, 'downloadAttachment'])->name('support.attachment');
+
+    // =====================================================================
+    // WORK ALLOCATION
+    // =====================================================================
+    Route::get('/allocations', [WorkAllocationController::class, 'index'])
+        ->name('allocations.index')
+        ->middleware('permission:view deadlines');
 
     // =====================================================================
     // NOTIFICATIONS
@@ -451,6 +489,14 @@ Route::middleware('auth')->group(function () {
 
         Route::get('/reports/deadline-summary', [ReportController::class, 'deadlineSummary'])
             ->name('reports.deadline-summary')
+            ->middleware('permission:view reports');
+
+        Route::get('/reports/error-report', [ReportController::class, 'errorReport'])
+            ->name('reports.error-report')
+            ->middleware('permission:view reports');
+
+        Route::get('/reports/feedback-report', [ReportController::class, 'feedbackReport'])
+            ->name('reports.feedback-report')
             ->middleware('permission:view reports');
 
         // -----------------------------------------------------------------

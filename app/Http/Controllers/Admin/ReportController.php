@@ -40,7 +40,7 @@ class ReportController extends Controller
             'filters' => $filters,
             'municipalities' => Municipality::orderBy('name')->get(['id', 'name', 'code']),
             'companies' => Company::orderBy('name')->get(['id', 'name', 'municipality_id']),
-            'statusOptions' => ['Pending', 'Processing', 'Completed', 'Rejected'],
+            'statusOptions' => ['draft', 'caps_processing', 'completed', 'failed'],
             'perPageOptions' => [20, 50, 100],
             'statusBreakdown' => $summary['status_breakdown'],
             'municipalityPerformance' => $summary['municipality_performance'],
@@ -400,6 +400,110 @@ class ReportController extends Controller
             'workings_file_name' => $upload->workings_file_name ?? '-',
             'systems_import_file_name' => $upload->systems_import_file_name ?? '-',
             'reupload_reason_type' => $upload->reupload_reason_type ?? '-',
+            'caps_dispatch_status' => $upload->caps_dispatch_status ?? 'draft',
+            'caps_errors_count' => is_array($upload->caps_summary) ? ($upload->caps_summary['caps_errors'] ?? 0) : 0,
+            'caps_new_count' => is_array($upload->caps_summary) ? ($upload->caps_summary['caps_new'] ?? 0) : 0,
+            'caps_batch_id' => $upload->caps_payment_batch_id,
         ];
+    }
+
+    /**
+     * CAPS Error Report — all uploads with errors, with error details.
+     */
+    public function errorReport(Request $request)
+    {
+        $this->authorize('view reports');
+
+        $uploads = Uploads::with(['company:id,name', 'municipality:id,name', 'user:id,name'])
+            ->whereNotNull('caps_summary')
+            ->get()
+            ->filter(fn ($u) => ($u->caps_summary['caps_errors'] ?? 0) > 0)
+            ->map(fn ($u) => [
+                'id' => $u->id,
+                'reference' => $u->reference,
+                'company' => $u->company?->name,
+                'municipality' => $u->municipality?->name,
+                'user' => $u->user?->name,
+                'submitted_at' => $u->submitted_at?->format('Y-m-d H:i'),
+                'batch_id' => $u->caps_payment_batch_id,
+                'total_records' => $u->caps_summary['total'] ?? 0,
+                'error_count' => $u->caps_summary['caps_errors'] ?? 0,
+                'error_records' => $u->caps_summary['errors_records'] ?? $u->caps_summary['error_records'] ?? [],
+            ])
+            ->values();
+
+        if ($request->has('download')) {
+            $rows = [];
+            foreach ($uploads as $u) {
+                foreach ($u['error_records'] as $err) {
+                    $rows[] = [
+                        $u['reference'], $u['company'], $u['municipality'], $u['submitted_at'],
+                        $err['row'] ?? '', $err['member_id'] ?? '', $err['employee_no'] ?? '',
+                        $err['policy_code'] ?? '', $err['company'] ?? '', $err['premium'] ?? '',
+                        $err['error'] ?? '',
+                    ];
+                }
+            }
+
+            $headers = ['Reference', 'Company', 'Municipality', 'Date', 'Row', 'Member ID', 'Employee No', 'Policy Code', 'Row Company', 'Premium', 'Error'];
+            return $this->streamCsv('error-report', $headers, $rows);
+        }
+
+        return response()->json($uploads);
+    }
+
+    /**
+     * Feedback Report — summary of all submissions with CAPS results.
+     */
+    public function feedbackReport(Request $request)
+    {
+        $this->authorize('view reports');
+
+        $uploads = Uploads::with(['company:id,name', 'municipality:id,name', 'user:id,name'])
+            ->whereNotNull('caps_summary')
+            ->orderByDesc('submitted_at')
+            ->get()
+            ->map(fn ($u) => [
+                'id' => $u->id,
+                'reference' => $u->reference,
+                'company' => $u->company?->name,
+                'municipality' => $u->municipality?->name,
+                'user' => $u->user?->name,
+                'submitted_at' => $u->submitted_at?->format('Y-m-d H:i'),
+                'status' => $u->caps_dispatch_status,
+                'batch_id' => $u->caps_payment_batch_id,
+                'total' => $u->caps_summary['total'] ?? 0,
+                'new' => $u->caps_summary['caps_new'] ?? 0,
+                'updated' => $u->caps_summary['caps_updated'] ?? 0,
+                'cancelled' => $u->caps_summary['caps_cancelled'] ?? 0,
+                'errors' => $u->caps_summary['caps_errors'] ?? 0,
+                'total_premium' => $u->caps_summary['total_premium'] ?? 0,
+            ]);
+
+        if ($request->has('download')) {
+            $headers = ['Reference', 'Company', 'Municipality', 'User', 'Date', 'Status', 'Batch', 'Total', 'New', 'Updated', 'Cancelled', 'Errors', 'Premium'];
+            $rows = $uploads->map(fn ($u) => [
+                $u['reference'], $u['company'], $u['municipality'], $u['user'], $u['submitted_at'],
+                $u['status'], $u['batch_id'], $u['total'], $u['new'], $u['updated'],
+                $u['cancelled'], $u['errors'], $u['total_premium'],
+            ])->toArray();
+
+            return $this->streamCsv('feedback-report', $headers, $rows);
+        }
+
+        return response()->json($uploads);
+    }
+
+    private function streamCsv(string $name, array $headers, array $rows)
+    {
+        $filename = $name . '-' . now()->format('Y-m-d') . '.csv';
+        return response()->streamDownload(function () use ($headers, $rows) {
+            $out = fopen('php://output', 'w');
+            fputcsv($out, $headers);
+            foreach ($rows as $row) {
+                fputcsv($out, $row);
+            }
+            fclose($out);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 }

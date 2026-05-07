@@ -16,31 +16,45 @@ class SyncCaseyReferenceData extends Command
      *   php artisan casey:sync-reference-data --only=municipalities
      */
     protected $signature = 'casey:sync-reference-data
-        {--only= : Restrict the sync to "companies" or "municipalities"}';
+        {--only= : Restrict the sync to "companies", "municipalities", "members", or "policies"}
+        {--include-members : Also sync members from CAPS}
+        {--include-policies : Also sync policies from CAPS}';
 
-    protected $description = 'Pull the authoritative Company / Municipality lists from CAPS into the Submission Tracker.';
+    protected $description = 'Pull authoritative data from CAPS into the Submission Tracker (municipalities, companies, members, policies).';
 
     public function handle(CaseyReferenceDataService $service): int
     {
         $only = $this->option('only');
+        $includeMembers = $this->option('include-members');
+        $includePolicies = $this->option('include-policies');
 
-        $municipalities = null;
-        $companies = null;
+        $results = [];
 
         if ($only === null || $only === 'municipalities') {
             $this->info('Syncing municipalities from CAPS...');
-            $municipalities = $service->syncMunicipalities();
-            $this->renderResult('Municipalities', $municipalities);
+            $results['municipalities'] = $service->syncMunicipalities();
+            $this->renderResult('Municipalities', $results['municipalities']);
         }
 
         if ($only === null || $only === 'companies') {
             $this->info('Syncing companies from CAPS...');
-            $companies = $service->syncCompanies();
-            $this->renderResult('Companies', $companies);
+            $results['companies'] = $service->syncCompanies();
+            $this->renderResult('Companies', $results['companies']);
         }
 
-        $allOk = collect([$municipalities, $companies])
-            ->filter()
+        if ($only === 'members' || $includeMembers) {
+            $this->info('Syncing members from CAPS...');
+            $results['members'] = $service->syncMembers();
+            $this->renderResult('Members', $results['members']);
+        }
+
+        if ($only === 'policies' || $includePolicies) {
+            $this->info('Syncing policies from CAPS...');
+            $results['policies'] = $service->syncPolicies();
+            $this->renderResult('Policies', $results['policies']);
+        }
+
+        $allOk = collect($results)
             ->every(fn ($r) => $r['ok'] === true);
 
         return $allOk ? self::SUCCESS : self::FAILURE;

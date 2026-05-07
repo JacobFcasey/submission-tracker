@@ -237,8 +237,11 @@ class CaseySsoController extends Controller
     }
 
     /**
-     * If no CAPS-synced municipalities or companies exist, trigger a sync
-     * so the first login populates reference data from CAPS automatically.
+     * Sync CAPS reference data on SSO login with a cooldown.
+     *
+     * If no data exists: sync immediately.
+     * If data exists but is stale (>4 hours): sync in background.
+     * If data was synced recently (<4 hours): skip.
      */
     private function autoSyncReferenceDataIfEmpty(): void
     {
@@ -247,8 +250,21 @@ class CaseySsoController extends Controller
             $hasCompanies = \App\Models\Company::exists();
 
             if (!$hasMunicipalities || !$hasCompanies) {
+                // First-time: sync immediately (blocking) so data is available
                 Log::info('[CAPS Sync] Auto-syncing reference data on first SSO login');
                 app(\App\Services\CaseyReferenceDataService::class)->syncAll();
+                return;
+            }
+
+            // Check staleness: if last sync was >4 hours ago, refresh
+            $lastSync = \App\Models\Municipality::max('casey_synced_at');
+            $threshold = now()->subHours(4);
+
+            if (!$lastSync || \Illuminate\Support\Carbon::parse($lastSync)->lt($threshold)) {
+                Log::info('[CAPS Sync] Triggering background sync on SSO login (data stale)');
+                dispatch(function () {
+                    app(\App\Services\CaseyReferenceDataService::class)->syncAll();
+                })->afterResponse();
             }
         } catch (\Throwable $e) {
             Log::warning('[CAPS Sync] Auto-sync failed: ' . $e->getMessage());

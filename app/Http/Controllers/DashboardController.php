@@ -219,21 +219,22 @@ class DashboardController extends Controller
                 ];
             });
 
-        // CAPS sync status — shows admins when data was last pulled
-        $capsSync = null;
-        if ($isAdmin) {
-            $municipalityCount = Municipality::count();
-            $companyCount = Company::count();
-            $lastSync = Municipality::whereNotNull('casey_synced_at')->max('casey_synced_at')
-                ?? Company::whereNotNull('casey_synced_at')->max('casey_synced_at');
+        // CAPS sync status — visible to all users
+        $municipalityCount = Municipality::count();
+        $companyCount = Company::count();
+        $memberCount = \App\Models\CapsMember::count();
+        $policyCount = \App\Models\CapsPolicy::count();
+        $lastSync = Municipality::whereNotNull('casey_synced_at')->max('casey_synced_at')
+            ?? Company::whereNotNull('casey_synced_at')->max('casey_synced_at');
 
-            $capsSync = [
-                'municipalities' => $municipalityCount,
-                'companies' => $companyCount,
-                'lastSync' => $lastSync,
-                'hasData' => $municipalityCount > 0 || $companyCount > 0,
-            ];
-        }
+        $capsSync = [
+            'municipalities' => $municipalityCount,
+            'companies' => $companyCount,
+            'members' => $memberCount,
+            'policies' => $policyCount,
+            'lastSync' => $lastSync,
+            'hasData' => $municipalityCount > 0 || $companyCount > 0,
+        ];
 
         return Inertia::render('Dashboard', [
             'stats' => $stats,

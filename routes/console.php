@@ -11,13 +11,20 @@ Artisan::command('inspire', function () {
 // ---------------------------------------------------------------------------
 // CAPS reference data sync (Layer 1)
 //
-// Pulls canonical Company / Municipality master data from CAPS every day at
-// 02:30 server time. Runs in the background so the schedule worker stays
+// Pulls canonical Company / Municipality / Member / Policy master data from
+// CAPS every 4 hours. Runs in the background so the schedule worker stays
 // responsive, and uses withoutOverlapping() so a slow CAPS response cannot
 // stack up multiple concurrent syncs. Output is appended to the daily log.
 // ---------------------------------------------------------------------------
 Schedule::command('casey:sync-reference-data')
-    ->dailyAt('02:30')
+    ->everyFourHours()
     ->withoutOverlapping(30)
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/casey-reference-data-sync.log'));
+
+// Full deep sync (municipalities, companies, members, policies) once daily.
+Schedule::command('casey:sync-reference-data --include-members --include-policies')
+    ->dailyAt('02:30')
+    ->withoutOverlapping(60)
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/casey-reference-data-sync.log'));

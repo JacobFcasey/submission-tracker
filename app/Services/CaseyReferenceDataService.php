@@ -26,8 +26,7 @@ use Illuminate\Support\Str;
 class CaseyReferenceDataService
 {
     /**
-     * Sync both municipalities and companies. Returns a summary array suitable
-     * for command output / logging.
+     * Sync municipalities and companies (core reference data).
      *
      * @return array{ok:bool,municipalities:array,companies:array,message:?string}
      */
@@ -42,6 +41,22 @@ class CaseyReferenceDataService
             'companies' => $companies,
             'message' => null,
         ];
+    }
+
+    /**
+     * Full sync including members and policies (heavier, typically run daily).
+     */
+    public function syncAllWithMembersAndPolicies(): array
+    {
+        $base = $this->syncAll();
+        $members = $this->syncMembers();
+        $policies = $this->syncPolicies();
+
+        return array_merge($base, [
+            'ok' => $base['ok'] && $members['ok'] && $policies['ok'],
+            'members' => $members,
+            'policies' => $policies,
+        ]);
     }
 
     /**
@@ -607,6 +622,268 @@ class CaseyReferenceDataService
         };
 
         return $isActive ? 'active' : 'inactive';
+    }
+
+    // ── Member sync ───────────────────────────────────────────────────────
+
+    /**
+     * Sync members from CAPS.
+     *
+     * @return array{ok:bool,fetched:int,created:int,updated:int,skipped:int,message:?string}
+     */
+    public function syncMembers(): array
+    {
+        $baseUrl = trim((string) config('services.casey.base_url', ''));
+        $verifySsl = (bool) config('services.casey.verify_ssl', true);
+
+        if ($baseUrl === '') {
+            return $this->emptyResult('Casey API base URL is missing.');
+        }
+
+        $endpoint = '/v1/member/api/members';
+        $requestUrl = $this->buildRequestUrl($baseUrl, $endpoint);
+
+        try {
+            $client = $this->buildHttpClient($verifySsl);
+            $token = $this->resolveAccessToken(
+                $baseUrl,
+                (string) config('services.casey.username', ''),
+                (string) config('services.casey.password', ''),
+                $verifySsl
+            );
+
+            if ($token) {
+                $client = $client->withToken($token);
+            }
+
+            // Fetch members with pagination
+            $page = 0;
+            $size = 500;
+            $created = 0;
+            $updated = 0;
+            $skipped = 0;
+            $totalFetched = 0;
+
+            do {
+                $response = $client->get($requestUrl, [
+                    'page' => $page,
+                    'size' => $size,
+                ]);
+
+                if ($response->failed()) {
+                    Log::warning('Casey members fetch failed', [
+                        'status' => $response->status(),
+                        'page' => $page,
+                    ]);
+                    break;
+                }
+
+                $data = $response->json();
+                $rows = $data['content'] ?? $data['data'] ?? $data;
+                if (!is_array($rows)) break;
+
+                $totalFetched += count($rows);
+
+                DB::transaction(function () use ($rows, &$created, &$updated, &$skipped) {
+                    foreach ($rows as $row) {
+                        $caseyId = (string) ($row['id'] ?? '');
+                        if ($caseyId === '') {
+                            $skipped++;
+                            continue;
+                        }
+
+                        // memberStatus and area may be nested objects from CAPS
+                        $memberStatus = $row['memberStatus'] ?? null;
+                        $statusString = is_array($memberStatus)
+                            ? ($memberStatus['status'] ?? null)
+                            : ($memberStatus ?? $row['status'] ?? null);
+
+                        $areaCode = $row['areaId'] ?? $row['area_id'] ?? null;
+                        if (is_array($areaCode)) {
+                            $areaCode = $areaCode['areaCode'] ?? $areaCode['id'] ?? null;
+                        }
+                        // If areaId is the CAPS ID string but area.areaCode has the human code, prefer that
+                        $areaObj = $row['area'] ?? null;
+                        if (is_array($areaObj) && isset($areaObj['areaCode'])) {
+                            $areaCode = $areaObj['areaCode'];
+                        }
+
+                        $attributes = [
+                            'id_number' => $row['idNumber'] ?? $row['id_number'] ?? null,
+                            'pay_number' => $row['payNumber'] ?? $row['pay_number'] ?? null,
+                            'first_name' => $row['firstName'] ?? $row['first_name'] ?? null,
+                            'surname' => $row['surName'] ?? $row['surname'] ?? $row['sur_name'] ?? null,
+                            'municipality_casey_id' => $row['organizationId'] ?? $row['organization_id'] ?? null,
+                            'area_code' => is_string($areaCode) ? $areaCode : null,
+                            'status' => is_string($statusString) ? $statusString : null,
+                            'cell_number' => $row['cellNumber'] ?? $row['cell_number'] ?? null,
+                            'email' => $row['email'] ?? null,
+                            'employment_start_date' => $row['empStartDate'] ?? $row['emp_start_date'] ?? null,
+                            'employment_end_date' => $row['empEndDate'] ?? $row['emp_end_date'] ?? null,
+                            'casey_synced_at' => Carbon::now(),
+                        ];
+
+                        $member = \App\Models\CapsMember::where('casey_id', $caseyId)->first();
+                        if ($member === null) {
+                            \App\Models\CapsMember::create(array_merge(['casey_id' => $caseyId], $attributes));
+                            $created++;
+                        } else {
+                            $member->fill($attributes);
+                            if ($member->isDirty()) {
+                                $member->save();
+                                $updated++;
+                            } else {
+                                $member->forceFill(['casey_synced_at' => Carbon::now()])->save();
+                            }
+                        }
+                    }
+                });
+
+                $totalPages = $data['totalPages'] ?? ceil(($data['totalElements'] ?? 0) / $size);
+                $page++;
+            } while ($page < $totalPages && count($rows) === $size);
+
+            Log::info('Casey members sync complete', compact('totalFetched', 'created', 'updated', 'skipped'));
+
+            return [
+                'ok' => true,
+                'fetched' => $totalFetched,
+                'created' => $created,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'message' => null,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Casey members sync exception', ['error' => $e->getMessage()]);
+            return $this->emptyResult('Members sync failed: ' . $e->getMessage());
+        }
+    }
+
+    // ── Policy sync ───────────────────────────────────────────────────────
+
+    /**
+     * Sync policies from CAPS.
+     *
+     * @return array{ok:bool,fetched:int,created:int,updated:int,skipped:int,message:?string}
+     */
+    public function syncPolicies(): array
+    {
+        $baseUrl = trim((string) config('services.casey.base_url', ''));
+        $verifySsl = (bool) config('services.casey.verify_ssl', true);
+
+        if ($baseUrl === '') {
+            return $this->emptyResult('Casey API base URL is missing.');
+        }
+
+        $endpoint = '/v1/premiums/status/fetch';
+        $requestUrl = $this->buildRequestUrl($baseUrl, $endpoint);
+
+        try {
+            $client = $this->buildHttpClient($verifySsl);
+            $token = $this->resolveAccessToken(
+                $baseUrl,
+                (string) config('services.casey.username', ''),
+                (string) config('services.casey.password', ''),
+                $verifySsl
+            );
+
+            if ($token) {
+                $client = $client->withToken($token);
+            }
+
+            // Use longer timeout for policies (large dataset)
+            $client = $client->timeout(120);
+
+            $page = 0;
+            $size = 500;
+            $created = 0;
+            $updated = 0;
+            $skipped = 0;
+            $totalFetched = 0;
+
+            do {
+                $response = $client->get($requestUrl, [
+                    'page' => $page,
+                    'size' => $size,
+                ]);
+
+                if ($response->failed()) {
+                    Log::warning('Casey policies fetch failed', [
+                        'status' => $response->status(),
+                        'page' => $page,
+                    ]);
+                    break;
+                }
+
+                $data = $response->json();
+                // CAPS wraps policies in policyStatuses.content
+                $envelope = $data['policyStatuses'] ?? $data;
+                $rows = $envelope['content'] ?? $data['content'] ?? $data['data'] ?? [];
+                if (!is_array($rows) || empty($rows)) break;
+
+                $totalFetched += count($rows);
+
+                DB::transaction(function () use ($rows, &$created, &$updated, &$skipped) {
+                    foreach ($rows as $row) {
+                        $caseyId = (string) ($row['id'] ?? '');
+                        if ($caseyId === '') {
+                            $skipped++;
+                            continue;
+                        }
+
+                        // statusName is a string; policyStatus may be an object
+                        $policyStatus = $row['statusName'] ?? $row['policyStatus'] ?? $row['policy_status'] ?? null;
+                        if (is_array($policyStatus)) {
+                            $policyStatus = $policyStatus['status'] ?? $policyStatus['name'] ?? null;
+                        }
+
+                        $attributes = [
+                            'policy_code' => $row['policyCode'] ?? $row['policy_code'] ?? null,
+                            'member_casey_id' => $row['memberId'] ?? $row['member_id'] ?? null,
+                            'company_casey_id' => $row['organizationId'] ?? $row['organization_id'] ?? null,
+                            'company_name' => $row['organizationName'] ?? $row['organization_name'] ?? null,
+                            'premium_amount' => $row['premiumAmount'] ?? $row['premium_amount'] ?? null,
+                            'balance_amount' => $row['balanceAmount'] ?? $row['balance_amount'] ?? null,
+                            'deduction_code' => $row['deductionCode'] ?? $row['deduction_code'] ?? null,
+                            'policy_status' => is_string($policyStatus) ? $policyStatus : null,
+                            'term' => $row['term'] ?? null,
+                            'casey_synced_at' => Carbon::now(),
+                        ];
+
+                        $policy = \App\Models\CapsPolicy::where('casey_id', $caseyId)->first();
+                        if ($policy === null) {
+                            \App\Models\CapsPolicy::create(array_merge(['casey_id' => $caseyId], $attributes));
+                            $created++;
+                        } else {
+                            $policy->fill($attributes);
+                            if ($policy->isDirty()) {
+                                $policy->save();
+                                $updated++;
+                            } else {
+                                $policy->forceFill(['casey_synced_at' => Carbon::now()])->save();
+                            }
+                        }
+                    }
+                });
+
+                $totalPages = $envelope['totalPages'] ?? ceil(($envelope['totalElements'] ?? 0) / $size);
+                $page++;
+            } while ($page < $totalPages && count($rows) === $size);
+
+            Log::info('Casey policies sync complete', compact('totalFetched', 'created', 'updated', 'skipped'));
+
+            return [
+                'ok' => true,
+                'fetched' => $totalFetched,
+                'created' => $created,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'message' => null,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('Casey policies sync exception', ['error' => $e->getMessage()]);
+            return $this->emptyResult('Policies sync failed: ' . $e->getMessage());
+        }
     }
 
     private function emptyResult(?string $message): array

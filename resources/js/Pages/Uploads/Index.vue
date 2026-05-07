@@ -256,6 +256,20 @@ const completeUpload = (id) => {
     router.get(`/uploads/${id}/complete`);
 };
 
+const dispatchToCaps = (id) => {
+    const upload = (props.uploads?.data || []).find(u => u.id === id);
+    const action = upload?.caps_dispatch_status === 'failed' ? 'retry' : 'dispatch';
+    const msg = action === 'retry'
+        ? 'Retry dispatching this submission to CAPS?'
+        : 'Dispatch this submission to CAPS for processing?';
+    if (!confirm(msg)) return;
+
+    const url = action === 'retry'
+        ? `/uploads/${id}/retry-caps`
+        : `/uploads/${id}/dispatch-to-caps`;
+    router.post(url, {}, { onSuccess: () => router.reload() });
+};
+
 // Preview modal state — two phases:
 //   Phase 1: file picker (previewModalUpload set, previewContent null)
 //   Phase 2: inline preview (previewContent loaded)
@@ -865,159 +879,106 @@ onMounted(() => {
                         Showing {{ props.uploads?.from || 0 }} to {{ props.uploads?.to || 0 }} of {{ props.uploads?.total || 0 }} results
                     </div>
 
-                    <!-- Uploads Table Container for scrolling reference -->
-                    <div class="uploads-table-container overflow-x-auto">
-                        <table v-if="(props.uploads?.data || []).length" class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
+                    <!-- Table (matching History page style) -->
+                    <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto">
+                        <table v-if="(props.uploads?.data || []).length" class="w-full text-sm">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-left">
                             <tr>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Municipality</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Submitted</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Files</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Uploaded By</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider w-14">#</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Date</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">User</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">File</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Total</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">New</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Upd</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Can</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Err</th>
+                                <th class="px-4 py-3 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                             </tr>
                             </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                            <tr v-for="upload in (props.uploads?.data || [])" :key="upload.id" class="hover:bg-gray-50">
-                                <td class="px-4 py-3">
-                                    <div class="text-sm font-medium text-gray-900">{{ upload.company?.name }}</div>
-                                    <div v-if="upload.reupload_reason_type" class="text-xs text-amber-600">
-                                        Re-upload
+                            <tbody class="divide-y divide-slate-100">
+                            <tr v-for="u in (props.uploads?.data || [])" :key="u.id" class="hover:bg-slate-50">
+                                <td class="px-4 py-2.5 font-mono text-xs text-slate-400">{{ u.id }}</td>
+                                <td class="px-4 py-2.5">
+                                    <span class="inline-block rounded px-2 py-0.5 text-[11px] font-medium"
+                                          :class="{
+                                              'bg-green-50 text-green-700': u.caps_dispatch_status === 'completed',
+                                              'bg-amber-50 text-amber-700': u.caps_dispatch_status === 'caps_processing',
+                                              'bg-red-50 text-red-700': u.caps_dispatch_status === 'failed',
+                                              'bg-gray-100 text-gray-600': !u.caps_dispatch_status || u.caps_dispatch_status === 'draft',
+                                              'bg-blue-50 text-blue-700': u.caps_dispatch_status === 'dispatched',
+                                          }">
+                                        {{ u.caps_dispatch_status === 'caps_processing' ? 'Review' : u.caps_dispatch_status === 'completed' ? 'Saved' : u.status }}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-2.5 whitespace-nowrap text-xs text-slate-700">{{ fmtDateTime(u.submitted_at_formatted) }}</td>
+                                <td class="px-4 py-2.5">
+                                    <div v-if="u.user" class="flex items-center gap-2">
+                                        <div class="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-semibold text-slate-600">{{ getUserInitials(u.user) }}</div>
+                                        <span class="text-xs text-slate-700">{{ u.user.name }}</span>
                                     </div>
                                 </td>
-                                <td class="px-4 py-3 text-sm text-gray-600">{{ upload.municipality?.name }}</td>
-                                <td class="px-4 py-3">
-                                        <span class="px-2 py-1 text-xs rounded-full" :class="getStatusColor(upload.status)">
-                                            {{ upload.status }}
-                                        </span>
+                                <td class="px-4 py-2.5">
+                                    <div class="text-xs text-slate-800 max-w-[220px] truncate">{{ u.company?.name }}</div>
+                                    <div class="text-[10px] text-slate-400">{{ u.municipality?.name }}</div>
                                 </td>
-                                <td class="px-4 py-3">
-                                    <div class="text-sm text-gray-900">{{ fmtDateTime(upload.submitted_at_formatted) }}</div>
-                                    <div class="text-xs text-gray-500">{{ upload.submitted_at_human }}</div>
-                                </td>
-                                <td class="px-4 py-3">
-                                    <div class="flex flex-wrap gap-1">
-                                            <span v-if="upload.original_file_names?.length"
-                                                  class="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded-full">
-                                                {{ upload.original_file_names.length }} Email
-                                            </span>
-                                        <span v-if="upload.workings_file_name"
-                                              class="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded-full">
-                                                Workings
-                                            </span>
-                                        <span v-if="upload.systems_import_file_name"
-                                              class="px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded-full">
-                                                Systems
-                                            </span>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-3">
-                                    <div class="flex items-center gap-2">
-                                        <div class="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-700">
-                                            {{ getUserInitials(upload.user) }}
-                                        </div>
-                                        <span class="text-sm text-gray-600">{{ upload.user?.name || '—' }}</span>
-                                    </div>
-                                </td>
-                                <td class="px-4 py-3 text-right">
-                                    <div class="flex items-center justify-end gap-2">
-                                        <!-- Preview — eye icon opens a modal file picker -->
-                                        <button
-                                            v-if="(upload.all_previewable_files || []).length"
-                                            @click="openPreviewModal(upload)"
-                                            class="p-1 text-gray-500 hover:text-blue-600"
-                                            title="Preview files"
-                                        >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                            </svg>
+                                <td class="px-4 py-2.5 text-right tabular-nums font-medium text-slate-800">{{ u.caps_summary?.total ?? '\u2014' }}</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_new ?? 0) > 0 ? 'font-semibold text-green-700' : 'text-slate-300'">{{ u.caps_summary?.caps_new ?? 0 }}</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_updated ?? 0) > 0 ? 'font-semibold text-blue-700' : 'text-slate-300'">{{ u.caps_summary?.caps_updated ?? 0 }}</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_cancelled ?? 0) > 0 ? 'font-semibold text-amber-700' : 'text-slate-300'">{{ u.caps_summary?.caps_cancelled ?? 0 }}</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums" :class="(u.caps_summary?.caps_errors ?? 0) > 0 ? 'font-semibold text-red-600' : 'text-slate-300'">{{ u.caps_summary?.caps_errors ?? 0 }}</td>
+                                <td class="px-4 py-2.5">
+                                    <div class="flex items-center gap-1.5">
+                                        <button v-if="(u.all_previewable_files || []).length" @click.stop="openPreviewModal(u)"
+                                                class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                            Files
                                         </button>
-
-                                        <!-- Complete button -->
-                                        <button
-                                            v-if="upload.can_be_completed"
-                                            @click="completeUpload(upload.id)"
-                                            class="p-1 text-gray-500 hover:text-green-600"
-                                            title="Complete Upload"
-                                        >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                            </svg>
+                                        <a v-if="u.caps_payment_batch_id" :href="`/uploads/${u.id}/caps-batch-detail`"
+                                           class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                                            Review
+                                        </a>
+                                        <button v-if="u.can_be_completed" @click="completeUpload(u.id)"
+                                                class="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-[11px] font-medium text-green-700 hover:bg-green-100 transition">
+                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                                            Add Files
                                         </button>
-
-                                        <!-- Delete button -->
-                                        <button
-                                            @click="removeUpload(upload.id)"
-                                            class="p-1 text-gray-500 hover:text-red-600"
-                                            title="Delete"
-                                        >
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
+                                        <button @click="removeUpload(u.id)"
+                                                class="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-600 hover:bg-red-50 transition">
+                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                            Delete
                                         </button>
                                     </div>
                                 </td>
                             </tr>
                             </tbody>
                         </table>
+                        </div>
 
                         <!-- Empty state -->
-                        <div v-else class="text-center py-12">
-                            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        <div v-if="!(props.uploads?.data || []).length" class="text-center py-12">
+                            <svg class="mx-auto h-12 w-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                             <h3 class="mt-2 text-sm font-medium text-gray-900">No uploads found</h3>
                             <p class="mt-1 text-sm text-gray-500">Try adjusting your filters or submit a new upload.</p>
                         </div>
                     </div>
 
-                    <!-- Pagination Controls -->
-                    <div v-if="(props.uploads?.last_page || 1) > 1" class="mt-6 flex items-center justify-between border-t border-gray-200 pt-6">
-                        <div class="flex items-center gap-2">
-                            <span class="text-sm text-gray-700">
-                                Page <span class="font-medium">{{ props.uploads?.current_page || 1 }}</span> of <span class="font-medium">{{ props.uploads?.last_page || 1 }}</span>
-                            </span>
-                        </div>
-
-                        <div class="flex items-center gap-2">
-                            <button
-                                @click="applyHistoryFilters((props.uploads?.current_page || 1) - 1)"
-                                :disabled="!props.uploads?.prev_page_url"
-                                class="px-3 py-1 rounded-md border border-gray-300 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
-                            >
-                                Previous
+                    <!-- Pagination -->
+                    <div v-if="props.uploads?.links?.length > 3" class="border-t border-slate-200 bg-slate-50 rounded-b-xl px-4 py-3 flex items-center justify-between">
+                        <span class="text-xs text-slate-500">{{ props.uploads.from }}&ndash;{{ props.uploads.to }} of {{ props.uploads.total }}</span>
+                        <div class="flex gap-1">
+                            <button v-for="link in props.uploads.links" :key="link.label"
+                                    @click="link.url && router.get(link.url, {}, { preserveState: true })"
+                                    :disabled="!link.url"
+                                    class="rounded-lg px-3 py-1 text-xs transition"
+                                    :class="link.active ? 'bg-slate-800 text-white' : link.url ? 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200' : 'text-slate-300'"
+                                    v-html="link.label">
                             </button>
-
-                            <!-- Page numbers -->
-                            <div class="hidden sm:flex items-center gap-1">
-                                <button
-                                    v-for="page in props.uploads?.last_page || 1"
-                                    :key="page"
-                                    @click="applyHistoryFilters(page)"
-                                    class="px-3 py-1 rounded-md text-sm font-medium transition-colors"
-                                    :class="(props.uploads?.current_page || 1) === page
-                                        ? 'bg-blue-600 text-white'
-                                        : 'text-gray-700 hover:bg-gray-100'"
-                                >
-                                    {{ page }}
-                                </button>
-                            </div>
-
-                            <button
-                                @click="applyHistoryFilters((props.uploads?.current_page || 1) + 1)"
-                                :disabled="!props.uploads?.next_page_url"
-                                class="px-3 py-1 rounded-md border border-gray-300 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 transition-colors"
-                            >
-                                Next
-                            </button>
-                        </div>
-
-                        <!-- Mobile page indicator -->
-                        <div class="sm:hidden text-sm text-gray-700">
-                            Page {{ props.uploads?.current_page || 1 }} of {{ props.uploads?.last_page || 1 }}
                         </div>
                     </div>
                 </div>

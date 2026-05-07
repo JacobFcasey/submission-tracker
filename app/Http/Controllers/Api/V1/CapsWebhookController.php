@@ -114,12 +114,33 @@ class CapsWebhookController extends Controller
 
         // --- Update the Upload if we found one ---
         if ($upload) {
-            $upload->update([
+            $updateData = [
                 'caps_payment_batch_id' => $batchId ?: $upload->caps_payment_batch_id,
                 'caps_status' => $capsStatus,
                 'caps_status_detail' => $detail ?? $upload->caps_status_detail,
                 'caps_last_webhook_at' => Carbon::parse($occurredAt),
-            ]);
+            ];
+
+            // Map CAPS webhook status to local dispatch workflow status
+            if (in_array($capsStatus, ['allocated', 'exported', 'refund_allocated'], true)) {
+                $updateData['caps_dispatch_status'] = Uploads::DISPATCH_COMPLETED;
+            } elseif ($capsStatus === 'failed') {
+                $updateData['caps_dispatch_status'] = Uploads::DISPATCH_FAILED;
+                $updateData['caps_errors'] = is_array($errors) && count($errors) > 0 ? $errors : $upload->caps_errors;
+            } elseif (in_array($capsStatus, ['imported', 'refund_created'], true)) {
+                $updateData['caps_dispatch_status'] = Uploads::DISPATCH_CAPS_PROCESSING;
+            }
+
+            // Store CAPS summary data if available
+            if (!empty($payload['summary']) || !empty($payload['totalRows'])) {
+                $updateData['caps_summary'] = [
+                    'total_rows' => $payload['totalRows'] ?? $payload['summary']['total'] ?? null,
+                    'processed' => $payload['processedRows'] ?? $payload['summary']['processed'] ?? null,
+                    'errors' => $payload['errorRows'] ?? $payload['summary']['errors'] ?? null,
+                ];
+            }
+
+            $upload->update($updateData);
 
             Log::info('CAPS webhook updated upload', [
                 'upload_id' => $upload->id,
