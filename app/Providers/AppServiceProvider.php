@@ -9,6 +9,7 @@ use App\Services\TenantContext;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Http\Request;
 use Spatie\Permission\Models\Permission;
 
@@ -38,6 +39,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if ($this->app->environment('production')) {
+            URL::forceScheme('https');
+        }
+
         RateLimiter::for('login', function (Request $request) {
             return [
                 Limit::perMinute(5)->by(
