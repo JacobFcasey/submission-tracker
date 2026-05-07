@@ -38,19 +38,19 @@ class AffordabilityController extends Controller
                 return response()->json(['ok' => false, 'message' => 'No member found with that ID number and pay number.']);
             }
 
-            // Step 2: Fetch full member detail from CAPS by casey_id
-            $token = $this->getToken();
-            if (!$token) {
-                return response()->json(['ok' => false, 'message' => 'Failed to authenticate with CAPS.']);
-            }
-
-            // Try demo file first for known demo accounts
+            // Try demo file first for known demo accounts (no CAPS auth needed)
             $demoPath = storage_path("app/demo/{$payNumber}.json");
             if (file_exists($demoPath)) {
                 $demo = json_decode(file_get_contents($demoPath), true);
                 if ($demo && ($demo['id_number'] ?? '') === $idNumber) {
                     return response()->json(['ok' => true, 'member' => $this->transformDemoMember($demo)]);
                 }
+            }
+
+            // Step 2: Fetch full member detail from CAPS by casey_id
+            $token = $this->getToken();
+            if (!$token) {
+                return response()->json(['ok' => false, 'message' => 'Failed to authenticate with CAPS.']);
             }
 
             $baseUrl = rtrim(config('services.casey.base_url'), '/');
