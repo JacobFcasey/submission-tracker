@@ -16,7 +16,7 @@ COPY . .
 RUN composer dump-autoload --optimize
 
 # ── Stage 3: Production image ──────────────────────────────────────────────
-FROM php:8.2-cli
+FROM php:8.2-cli-bookworm
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
